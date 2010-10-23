@@ -33,3 +33,9 @@ void check_range_has_addr(range_t range, addr_t addr);
 
 prange_t pdup(prange_t range);
 void write_range(prange_t range, const char *fn, mode_t mode);
+
+static inline bool is_valid_range(prange_t range) {
+    char c;
+    return !mincore(range.start, range.size, &c);
+}
+

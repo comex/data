@@ -145,11 +145,11 @@ int main(int argc, char **argv) {
     b_init(&binary);
     switch(argv[1][1]) {
     case 'C':
-        b_load_dyldcache(&binary, argv[2], true);
+        b_load_running_dyldcache(&binary, (void *) 0x30000000);
         write_range(bar(&binary), "libgmalloc.dylib", 0644);
         return 0;
     case 'c':
-        b_load_dyldcache(&binary, argv[2], false);
+        b_load_dyldcache(&binary, argv[2]);
         write_range(bar(&binary), "libgmalloc.dylib", 0644);
         return 0;
     case 'k':

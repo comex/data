@@ -33,8 +33,8 @@ void b_macho_load_symbols(struct binary *binary) {
             }
             binary->nsyms = scmd->nsyms;
             binary->strsize = scmd->strsize;
-            binary->symtab = macho_rangeconv_off((range_t) {binary, scmd->symoff, scmd->nsyms * sizeof(struct nlist)}).start;
-            binary->strtab = macho_rangeconv_off((range_t) {binary, scmd->stroff, scmd->strsize}).start;
+            binary->symtab = rangeconv_off((range_t) {binary, scmd->symoff, scmd->nsyms * sizeof(struct nlist)}).start;
+            binary->strtab = rangeconv_off((range_t) {binary, scmd->stroff, scmd->strsize}).start;
         } else if(cmd->cmd == LC_DYSYMTAB) {
             binary->dysymtab = (void *) cmd;
         } else if(cmd->cmd == LC_DYLD_INFO_ONLY) {
@@ -58,17 +58,8 @@ void b_macho_load_symbols(struct binary *binary) {
     }
 }
 
-void b_load_dyldcache(struct binary *binary, const char *path, bool pre_loaded) {
-#define _arg path
-    int fd = open(path, O_RDONLY);
-    if(fd == -1) { 
-        edie("could not open");
-    }
-    binary->dyld_hdr = malloc(sizeof(*binary->dyld_hdr));
-    if(read(fd, binary->dyld_hdr, sizeof(binary->dyld_hdr)) != sizeof(binary->dyld_hdr)) {
-        die("truncated");
-    }
-    if(memcmp(binary->dyld_hdr->magic, "dyld", 4)) {
+static void do_dyld_hdr(struct binary *binary) {
+    if(memcmp(binary->dyld_hdr->magic, "dyld_", 5)) {
         die("not a dyld cache");
     }
     char *thing = binary->dyld_hdr->magic + sizeof(binary->dyld_hdr->magic) - 7;
@@ -84,37 +75,44 @@ void b_load_dyldcache(struct binary *binary, const char *path, bool pre_loaded) 
         die("insane mapping count: %u", binary->dyld_hdr->mappingCount);
     }
     binary->dyld_mapping_count = binary->dyld_hdr->mappingCount;
+}
+
+void b_load_dyldcache(struct binary *binary, const char *path) {
+#define _arg path
+    int fd = open(path, O_RDONLY);
+    if(fd == -1) { 
+        edie("could not open");
+    }
+    binary->dyld_hdr = malloc(sizeof(*binary->dyld_hdr));
+    if(read(fd, binary->dyld_hdr, sizeof(*binary->dyld_hdr)) != sizeof(*binary->dyld_hdr)) {
+        die("truncated");
+    }
+    do_dyld_hdr(binary);
     size_t sz = binary->dyld_mapping_count * sizeof(struct shared_file_mapping_np);
     binary->dyld_mappings = malloc(sz);
     if(pread(fd, binary->dyld_mappings, sz, binary->dyld_hdr->mappingOffset) != sz) {
         edie("could not read mappings");
     }
-    if(pre_loaded) {
-        binary->load_base = (void *) 0x30000000;
-        // verify!
-        for(int i = 0; i < binary->dyld_mapping_count; i++) {
-            struct shared_file_mapping_np mapping = binary->dyld_mappings[i];
-            prange_t pr = rangeconv_checkof((range_t) {binary, mapping.sfm_address, mapping.sfm_size});
-            if(!is_valid_range(pr)) {
-                die("segment %d wasn't found in memory at %p", i, pr.start);
-            }
-        }
-    } else {
-        binary->load_base = reserve_memory();
-        for(int i = 0; i < binary->dyld_mapping_count; i++) {
-            struct shared_file_mapping_np mapping = binary->dyld_mappings[i];
-            prange_t pr = rangeconv_checkof((range_t) {binary, (addr_t) mapping.sfm_address, (size_t) mapping.sfm_size});
-            if(mmap(pr.start, pr.size, PROT_READ, MAP_SHARED | MAP_FIXED, fd, (off_t) mapping.sfm_file_offset) == MAP_FAILED) {
-                edie("could not map segment %d of this crappy binary format", i);
-            }
+    binary->load_base = reserve_memory();
+    for(int i = 0; i < binary->dyld_mapping_count; i++) {
+        struct shared_file_mapping_np mapping = binary->dyld_mappings[i];
+        prange_t pr = rangeconv_checkof((range_t) {binary, (addr_t) mapping.sfm_address, (size_t) mapping.sfm_size});
+        if(mmap(pr.start, pr.size, PROT_READ, MAP_SHARED | MAP_FIXED, fd, (off_t) mapping.sfm_file_offset) == MAP_FAILED) {
+            edie("could not map segment %d of this crappy binary format", i);
         }
     }
-    binary->dyld_fd = fd;
 #undef _arg
+}
+
+void b_load_running_dyldcache(struct binary *binary, void *baseaddr) {
+    binary->dyld_hdr = binary->load_base = baseaddr;
+    do_dyld_hdr(binary);
+    binary->dyld_mappings = (void *) ((char *)binary->dyld_hdr + binary->dyld_hdr->mappingOffset);
 }
 
 range_t b_dyldcache_nth_segment(const struct binary *binary, int n) {
     if(n < binary->dyld_mapping_count) {
+        ((struct binary *) binary)->last_sfm = &binary->dyld_mappings[n];
         return (range_t) {binary, (addr_t) binary->dyld_mappings[n].sfm_address, (size_t) binary->dyld_mappings[n].sfm_size};
     } else {
         return (range_t) {binary, 0, 0};
@@ -126,23 +124,69 @@ void b_dyldcache_load_macho(struct binary *binary, const char *filename) {
         die("insane images count");
     }
     for(int i = 0; i < binary->dyld_hdr->imagesCount; i++) {
-        struct dyld_cache_image_info info;
-        if(pread(binary->dyld_fd, &info, sizeof(info), binary->dyld_hdr->imagesOffset + i * sizeof(struct dyld_cache_image_info)) != sizeof(info)) {
-            die("could not read image");
-        }
-        char name[128];
-        if(pread(binary->dyld_fd, name, sizeof(name), info.pathFileOffset) <= 0) {
-            die("could not read image name");
-        }
+        struct dyld_cache_image_info *info = rangeconv_off((range_t) {binary, binary->dyld_hdr->imagesOffset + i * sizeof(*info), sizeof(*info)}).start;
+        char *name = rangeconv_off((range_t) {binary, info->pathFileOffset, 128}).start;
         if(strncmp(name, filename, 128)) {
             continue;
         }
         // we found it
-        binary->mach_hdr = macho_rangeconv((range_t) {binary, (addr_t) info.address, 0x1000}).start;
+        binary->mach_hdr = rangeconv((range_t) {binary, (addr_t) info->address, 0x1000}).start;
         break;
     }
     b_macho_load_symbols(binary);
 }
+
+#define DEFINE_RANGECONV(name, dfield, mfield, intro, dreturn, mreturn) \
+prange_t name(range_t range) { \
+    if(range.binary->dyld_hdr) { \
+        struct shared_file_mapping_np *sfm = range.binary->last_sfm; \
+        if(sfm && sfm->dfield <= range.start && range.start <= range.start + range.size && range.start + range.size <= sfm->dfield + sfm->sfm_size) { \
+            goto dok; \
+        } \
+        sfm = range.binary->dyld_mappings; \
+        for(uint32_t i = 0; i < range.binary->dyld_mapping_count; i++) { \
+            if(sfm->dfield <= range.start && range.start <= range.start + range.size && range.start + range.size <= sfm->dfield + sfm->sfm_size) { \
+                /* ditto */ \
+                ((struct binary *) (range.binary))->last_sfm = sfm; \
+                goto dok; \
+            } \
+            sfm++; \
+        } \
+        goto err; \
+        dok: \
+        return (prange_t) {dreturn, range.size}; \
+    } else if(range.binary->mach_hdr) { \
+        struct segment_command *seg = range.binary->last_seg; \
+        if(seg && seg->mfield <= range.start && range.start <= range.start + range.size && range.start + range.size <= seg->mfield + seg->filesize) { \
+            goto mok; \
+        } \
+        CMD_ITERATE(range.binary->mach_hdr, cmd) { \
+            if(cmd->cmd == LC_SEGMENT) { \
+                seg = (void *) cmd; \
+                if(seg->mfield <= range.start && range.start <= range.start + range.size && range.start + range.size <= seg->mfield + seg->filesize) { \
+                    ((struct binary *) (range.binary))->last_seg = seg; \
+                    goto mok; \
+                } \
+            } \
+        } \
+        goto err; \
+        mok: \
+        return (prange_t) {mreturn, range.size}; \
+    } else { \
+        die("neither dyld_hdr nor mach_hdr"); \
+    } \
+    err: \
+    die(intro " (%08x, %zx) not valid", range.start, range.size); \
+}
+
+#ifndef I_TRUST_YOU
+DEFINE_RANGECONV(rangeconv, sfm_address, vmaddr, "range", \
+    b_addrconv_unsafe(range.binary, range.start), \
+    b_addrconv_unsafe(range.binary, range.start))
+#endif
+DEFINE_RANGECONV(rangeconv_off, sfm_file_offset, fileoff, "offset range", \
+    (char *)b_addrconv_unsafe(range.binary, sfm->sfm_address) + range.start - sfm->sfm_file_offset, \
+    (char *)b_addrconv_unsafe(range.binary, seg->vmaddr) + range.start - seg->fileoff)
 
 void b_load_macho(struct binary *binary, const char *path) {
 #define _arg path
@@ -342,7 +386,7 @@ range_t b_macho_segrange(const struct binary *binary, const char *segname) {
     die("no such segment %s", segname);
 }
 
-#define DEFINE_RANGECONV(name, field, intro) \
+#define DEFINE_MACHO_RANGECONV(name, field, intro) \
 prange_t name(range_t range) { \
     struct segment_command *seg = range.binary->last_seg; \
     if(seg && seg->field <= range.start && seg->filesize - (seg->field - range.start) >= range.size) { \
@@ -351,7 +395,7 @@ prange_t name(range_t range) { \
     CMD_ITERATE(range.binary->mach_hdr, cmd) { \
         if(cmd->cmd == LC_SEGMENT) { \
             seg = (void *) cmd; \
-            if(seg && seg->field <= range.start && seg->filesize - (seg->field - range.start) >= range.size) { \
+            if(seg->field <= range.start && seg->filesize - (seg->field - range.start) >= range.size) { \
                 /* ditto */ \
                 ((struct binary *) (range.binary))->last_seg = seg; \
                 goto ok; \
@@ -362,11 +406,6 @@ prange_t name(range_t range) { \
     ok: \
     return (prange_t) {b_addrconv_unsafe(range.binary, range.start), range.size}; \
 }
-
-#ifndef I_TRUST_YOU
-DEFINE_RANGECONV(macho_rangeconv, vmaddr, "range")
-#endif
-DEFINE_RANGECONV(macho_rangeconv_off, fileoff, "offset range")
 
 prange_t rangeconv_checkof(range_t range) {
     if((range.size & ~0x0fffffff) || (((range.start & 0x0fffffff) + range.size) & ~0x0fffffff)) {

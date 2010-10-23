@@ -22,9 +22,9 @@ static addr_t find_data_int(range_t range, int16_t *buf, ssize_t pattern_size, s
     // I implemented the other half, but it actually made things /slower/
     buf += pattern_size - 1;
     addr_t foundit = 0;
-    prange_t pr = macho_rangeconv(range);
-    uint8_t *start = pr.start, *cursor = start;
-    uint8_t *end = start + pr.size;
+    prange_t pr = rangeconv(range);
+    uint8_t *start = pr.start + pattern_size - 1, *cursor = start;
+    uint8_t *end = pr.start + pr.size;
     while(cursor < end) {
         for(int i = 0; i >= (-pattern_size + 1); i--) {
             if(buf[i] != -1 && cursor[i] != buf[i]) {
@@ -113,10 +113,10 @@ addr_t find_string(range_t range, const char *string, int align, bool must_find)
 }
 
 addr_t find_int32(range_t range, uint32_t number, bool must_find) {
-    prange_t pr = macho_rangeconv(range);
+    prange_t pr = rangeconv(range);
     char *start = pr.start;
     char *end = pr.start + pr.size;
-    for(char *p = start; p < end; p++) {
+    for(char *p = start; p + 4 <= end; p++) {
         if(*((uint32_t *)p) == number) {
             return p - start + range.start;
         }
@@ -150,7 +150,7 @@ addr_t find_bof(range_t range, addr_t eof, bool is_thumb) {
     // push {..., lr}; add r7, sp, ...
     addr_t addr = (eof - 1) & ~1;
     check_range_has_addr(range, addr);
-    prange_t pr = macho_rangeconv(range);
+    prange_t pr = rangeconv(range);
     if(is_thumb) {
         addr &= ~1;
         uint8_t *p = pr.start + (addr - range.start);

@@ -75,7 +75,7 @@ void do_kern(const char *filename) {
             for(int i = 0; i < seg->nsects; i++) {
                 struct section *sect = &sections[i];
                 if(!strncmp(sect->sectname, "__data", 16)) {
-                    uint32_t *things = macho_rangeconv((range_t) {kern, sect->addr, sect->size}).start;
+                    uint32_t *things = rangeconv((range_t) {kern, sect->addr, sect->size}).start;
                     for(int i = 0; i < sect->size / 4; i++) {
                         if(things[i] == 0x861000) {
                             sysent = sect->addr + 4*i + 4;
@@ -92,13 +92,13 @@ void do_kern(const char *filename) {
 }
 
 void relocate(uint32_t reloff, uint32_t nreloc) {
-    struct relocation_info *things = macho_rangeconv_off((range_t) {to_load, reloff, nreloc * sizeof(struct relocation_info)}).start;
+    struct relocation_info *things = rangeconv_off((range_t) {to_load, reloff, nreloc * sizeof(struct relocation_info)}).start;
     for(int i = 0; i < nreloc; i++) {
         assert(!things[i].r_pcrel);
         assert(things[i].r_length == 2);
         assert(things[i].r_type == 0);
         uint32_t thing = reloc_base + things[i].r_address;
-        uint32_t *p = macho_rangeconv((range_t) {to_load, thing, 4}).start;
+        uint32_t *p = rangeconv((range_t) {to_load, thing, 4}).start;
         if(things[i].r_extern) {
             uint32_t sym = things[i].r_symbolnum;
             *p += lookup_sym(to_load->strtab + to_load->symtab[sym].n_un.n_strx);
@@ -220,8 +220,8 @@ void do_kcode(const char *filename, uint32_t prelink_slide, const char *prelink_
                     case S_NON_LAZY_SYMBOL_POINTERS:
                     case S_LAZY_SYMBOL_POINTERS: {
                         uint32_t indirect_table_offset = sect->reserved1;
-                        uint32_t *indirect = macho_rangeconv_off((range_t) {to_load, to_load->dysymtab->indirectsymoff + sect->reserved1*sizeof(uint32_t), (sect->size / 4) * sizeof(uint32_t)}).start;
-                        uint32_t *things = macho_rangeconv((range_t) {to_load, sect->addr, sect->size}).start;
+                        uint32_t *indirect = rangeconv_off((range_t) {to_load, to_load->dysymtab->indirectsymoff + sect->reserved1*sizeof(uint32_t), (sect->size / 4) * sizeof(uint32_t)}).start;
+                        uint32_t *things = rangeconv((range_t) {to_load, sect->addr, sect->size}).start;
                         for(int i = 0; i < sect->size / 4; i++) {
                             uint32_t sym = indirect[i];
                             switch(sym) {
@@ -347,7 +347,7 @@ void do_kcode(const char *filename, uint32_t prelink_slide, const char *prelink_
                 struct section *sect = &sections[i];
 
                 if((sect->flags & SECTION_TYPE) == S_MOD_INIT_FUNC_POINTERS) {
-                    void **things = macho_rangeconv((range_t) {to_load, sect->addr, sect->size}).start;
+                    void **things = rangeconv((range_t) {to_load, sect->addr, sect->size}).start;
                     for(int i = 0; i < sect->size / 4; i++) {
                         struct sysent my_sysent = { 1, 0, 0, things[i], NULL, NULL, _SYSCALL_RET_INT_T, 0 };
                         printf("--> %p\n", things[i]);
