@@ -70,11 +70,12 @@ void do_kern(const char *filename) {
         if(cmd->cmd == LC_SEGMENT) {
             if(sysent) continue; 
             struct segment_command *seg = (void *) cmd;
+            kern->last_seg = seg;
             struct section *sections = (void *) (seg + 1);
             for(int i = 0; i < seg->nsects; i++) {
                 struct section *sect = &sections[i];
                 if(!strncmp(sect->sectname, "__data", 16)) {
-                    uint32_t *things = b_addrconv(kern, sect->addr);
+                    uint32_t *things = macho_rangeconv((range_t) {kern, sect->addr, sect->size}).start;
                     for(int i = 0; i < sect->size / 4; i++) {
                         if(things[i] == 0x861000) {
                             sysent = sect->addr + 4*i + 4;
@@ -91,13 +92,13 @@ void do_kern(const char *filename) {
 }
 
 void relocate(uint32_t reloff, uint32_t nreloc) {
-    struct relocation_info *things = b_macho_offconv(to_load, reloff);
+    struct relocation_info *things = macho_rangeconv_off((range_t) {to_load, reloff, nreloc * sizeof(struct relocation_info)}).start;
     for(int i = 0; i < nreloc; i++) {
         assert(!things[i].r_pcrel);
         assert(things[i].r_length == 2);
         assert(things[i].r_type == 0);
         uint32_t thing = reloc_base + things[i].r_address;
-        uint32_t *p = b_addrconv(to_load, thing);
+        uint32_t *p = macho_rangeconv((range_t) {to_load, thing, 4}).start;
         if(things[i].r_extern) {
             uint32_t sym = things[i].r_symbolnum;
             *p += lookup_sym(to_load->strtab + to_load->symtab[sym].n_un.n_strx);
@@ -202,11 +203,10 @@ void do_kcode(const char *filename, uint32_t prelink_slide, const char *prelink_
         relocate(to_load->dysymtab->locreloff, to_load->dysymtab->nlocrel);
         relocate(to_load->dysymtab->extreloff, to_load->dysymtab->nextrel);
 
-        uint32_t *indirect = b_macho_offconv(to_load, to_load->dysymtab->indirectsymoff);
-
         CMD_ITERATE(to_load->mach_hdr, cmd) {
             if(cmd->cmd == LC_SEGMENT) {
                 struct segment_command *seg = (void *) cmd;
+                to_load->last_seg = seg;
                 seg->vmaddr += slide;
                 if(!reloc_base) reloc_base = seg->vmaddr;
                 printf("%.16s %08x\n", seg->segname, seg->vmaddr);
@@ -220,9 +220,10 @@ void do_kcode(const char *filename, uint32_t prelink_slide, const char *prelink_
                     case S_NON_LAZY_SYMBOL_POINTERS:
                     case S_LAZY_SYMBOL_POINTERS: {
                         uint32_t indirect_table_offset = sect->reserved1;
-                        uint32_t *things = b_addrconv(to_load, sect->addr);
+                        uint32_t *indirect = macho_rangeconv_off((range_t) {to_load, to_load->dysymtab->indirectsymoff + sect->reserved1*sizeof(uint32_t), (sect->size / 4) * sizeof(uint32_t)}).start;
+                        uint32_t *things = macho_rangeconv((range_t) {to_load, sect->addr, sect->size}).start;
                         for(int i = 0; i < sect->size / 4; i++) {
-                            uint32_t sym = indirect[indirect_table_offset+i];
+                            uint32_t sym = indirect[i];
                             switch(sym) {
                             case INDIRECT_SYMBOL_LOCAL:
                                 things[i] += slide;
@@ -236,9 +237,12 @@ void do_kcode(const char *filename, uint32_t prelink_slide, const char *prelink_
                         }
                         break;
                     }
+                    case S_MOD_TERM_FUNC_POINTERS:
+                        // be helpful for the unload later
+                        sect->reserved2 = sysent;
+                        break;
                     case S_ZEROFILL:
                     case S_MOD_INIT_FUNC_POINTERS:
-                    case S_MOD_TERM_FUNC_POINTERS:
                     case S_REGULAR:
                     case S_SYMBOL_STUBS:
                     case S_CSTRING_LITERALS:
@@ -271,7 +275,7 @@ void do_kcode(const char *filename, uint32_t prelink_slide, const char *prelink_
             struct segment_command *seg = (void *) cmd;
             int32_t fs = seg->filesize;
             if(seg->vmsize < fs) fs = seg->vmsize;
-            vm_offset_t of = (vm_offset_t) b_addrconv(to_load, seg->vmaddr);
+            vm_offset_t of = (vm_offset_t) b_addrconv_unsafe(to_load, seg->vmaddr);
             vm_address_t ad = seg->vmaddr;
             struct section *sections = (void *) (seg + 1);
             for(int i = 0; i < seg->nsects; i++) {
@@ -337,12 +341,13 @@ void do_kcode(const char *filename, uint32_t prelink_slide, const char *prelink_
     CMD_ITERATE(to_load->mach_hdr, cmd) {
         if(cmd->cmd == LC_SEGMENT) {
             struct segment_command *seg = (void *) cmd;
+            to_load->last_seg = seg;
             struct section *sections = (void *) (seg + 1);
             for(int i = 0; i < seg->nsects; i++) {
                 struct section *sect = &sections[i];
 
                 if((sect->flags & SECTION_TYPE) == S_MOD_INIT_FUNC_POINTERS) {
-                    void **things = b_addrconv(to_load, sect->addr);
+                    void **things = macho_rangeconv((range_t) {to_load, sect->addr, sect->size}).start;
                     for(int i = 0; i < sect->size / 4; i++) {
                         struct sysent my_sysent = { 1, 0, 0, things[i], NULL, NULL, _SYSCALL_RET_INT_T, 0 };
                         printf("--> %p\n", things[i]);
@@ -391,6 +396,8 @@ void unload_kcode(uint32_t addr) {
                 struct section *sect = &sections[i];
 
                 if((sect->flags & SECTION_TYPE) == S_MOD_TERM_FUNC_POINTERS) {
+                    sysent = sect->reserved2; // hurf durf
+                    assert(sysent);
                     void **things = malloc(sect->size);
                     kr_assert(vm_read_overwrite(kernel_task,
                                                 (vm_address_t) sect->addr,
@@ -424,31 +431,58 @@ void unload_kcode(uint32_t addr) {
     }
 }
 
+#define parse_hex(arg) ({char *_end; uint32_t _r = (uint32_t) strtoll((arg), &_end, 16); if(*_end) { fprintf(stderr, "error: bad hex string %s\n", (arg)); goto usage; } _r;})
 int main(int argc, char **argv) {
-    if(argc <= 1) goto usage;
-    if(argv[1][0] != '-' || argv[1][1] == '\0' || argv[1][2] != '\0') goto usage;
-    switch(argv[1][1]) {
-    case 'l':
-        if(argc <= 3) goto usage;
-        do_kern(argv[2]);
-        do_kcode(argv[3], 0, NULL);
-        return 0;
-    case 'p':
-        if(argc <= 5) goto usage;
-        do_kern(argv[2]);
-        do_kcode(argv[3], (uint32_t) strtoll(argv[4], NULL, 16), argv[5]);
-        return 0;
-    case 'u':
-        if(argc <= 3) goto usage;
-        do_kern(argv[2]);
-        unload_kcode((uint32_t) strtoll(argv[3], NULL, 16));
-        return 0;
+    bool did_kern;
+    argv++;
+    while(1) {
+        char *arg = *argv++;
+        if(!arg) goto usage;
+        if(arg[0] != '-' || arg[1] == '\0' || arg[2] != '\0') goto usage;
+        switch(arg[1]) {
+        case 'k': {
+            char *kern_fn;
+            if(!(kern_fn = *argv++)) goto usage;
+            do_kern(kern_fn);
+            did_kern = true;
+            break;
+        }
+        case 'l': {
+            if(!did_kern) {
+                fprintf(stderr, "error: no -k specified\n");
+                goto usage;
+            }
+            char *to_load_fn;
+            if(!(to_load_fn = *argv++)) goto usage;
+            if(*argv) goto usage;
+            do_kcode(to_load_fn, 0, NULL);
+            return 0;
+        }
+        case 'p': {
+            if(!did_kern) {
+                fprintf(stderr, "error: no -k specified\n");
+                goto usage;
+            }
+            char *to_load_fn, *baseaddr_hex, *output_fn;
+            if(!(to_load_fn = *argv++)) goto usage;
+            if(!(baseaddr_hex = *argv++)) goto usage;
+            if(!(output_fn = *argv++)) goto usage;
+            do_kcode(to_load_fn, parse_hex(baseaddr_hex), output_fn);
+            return 0;
+        }
+        case 'u': {
+            char *baseaddr_hex;
+            if(!(baseaddr_hex = *argv++)) goto usage;
+            unload_kcode(parse_hex(baseaddr_hex));
+            return 0;
+        }
+        }
     }
 
     usage:
-    printf("Usage: loader -l kern kcode.dylib                         load\n" \
-           "              -p kern kcode.dylib f0001000 out.dylib      prelink\n" \
-           "              -u kern f0001000                            unload\n" \
+    printf("Usage: loader -k kern -l kcode.dylib                         load\n" \
+           "                      -p kcode.dylib f0000000 out.dylib      prelink\n" \
+           "              -u f0000000                                    unload\n" \
            );
 }
 

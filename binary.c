@@ -33,8 +33,8 @@ void b_macho_load_symbols(struct binary *binary) {
             }
             binary->nsyms = scmd->nsyms;
             binary->strsize = scmd->strsize;
-            binary->symtab = b_macho_offconv(binary, scmd->symoff);
-            binary->strtab = b_macho_offconv(binary, scmd->stroff);
+            binary->symtab = macho_rangeconv_off((range_t) {binary, scmd->symoff, scmd->nsyms * sizeof(struct nlist)}).start;
+            binary->strtab = macho_rangeconv_off((range_t) {binary, scmd->stroff, scmd->strsize}).start;
         } else if(cmd->cmd == LC_DYSYMTAB) {
             binary->dysymtab = (void *) cmd;
         } else if(cmd->cmd == LC_DYLD_INFO_ONLY) {
@@ -71,12 +71,13 @@ void b_load_dyldcache(struct binary *binary, const char *path, bool pre_loaded) 
     if(memcmp(binary->dyld_hdr->magic, "dyld", 4)) {
         die("not a dyld cache");
     }
-    if(!memcmp(binary->dyld_hdr->magic + sizeof(binary->dyld_hdr->magic) - 7, " armv7", 7)) {
+    char *thing = binary->dyld_hdr->magic + sizeof(binary->dyld_hdr->magic) - 7;
+    if(!memcmp(thing, " armv7", 7)) {
         binary->actual_cpusubtype = 9;
-    } else if(!memcmp(binary->dyld_hdr->magic + sizeof(binary->dyld_hdr->magic) - 7, " armv6", 7)) {
+    } else if(!memcmp(thing, " armv6", 7)) {
         binary->actual_cpusubtype = 6;
     } else {
-        die("unknown processor in magic: %.16s", binary->dyld_hdr->magic);
+        die("unknown processor in magic: %.6s", thing);
     }
 
     if(binary->dyld_hdr->mappingCount > 1000) {
@@ -93,15 +94,17 @@ void b_load_dyldcache(struct binary *binary, const char *path, bool pre_loaded) 
         // verify!
         for(int i = 0; i < binary->dyld_mapping_count; i++) {
             struct shared_file_mapping_np mapping = binary->dyld_mappings[i];
-            if(!is_valid_range((prange_t) {b_addrconv(binary, mapping.sfm_address), (size_t) mapping.sfm_size})) {
-                die("segment %d wasn't found in memory at %p", i, b_addrconv(binary, mapping.sfm_address));
+            prange_t pr = rangeconv_checkof((range_t) {binary, mapping.sfm_address, mapping.sfm_size});
+            if(!is_valid_range(pr)) {
+                die("segment %d wasn't found in memory at %p", i, pr.start);
             }
         }
     } else {
         binary->load_base = reserve_memory();
         for(int i = 0; i < binary->dyld_mapping_count; i++) {
             struct shared_file_mapping_np mapping = binary->dyld_mappings[i];
-            if(mmap(b_addrconv(binary, (addr_t) mapping.sfm_address), (size_t) mapping.sfm_size, PROT_READ, MAP_SHARED | MAP_FIXED, fd, (off_t) mapping.sfm_file_offset) == MAP_FAILED) {
+            prange_t pr = rangeconv_checkof((range_t) {binary, (addr_t) mapping.sfm_address, (size_t) mapping.sfm_size});
+            if(mmap(pr.start, pr.size, PROT_READ, MAP_SHARED | MAP_FIXED, fd, (off_t) mapping.sfm_file_offset) == MAP_FAILED) {
                 edie("could not map segment %d of this crappy binary format", i);
             }
         }
@@ -135,10 +138,7 @@ void b_dyldcache_load_macho(struct binary *binary, const char *filename) {
             continue;
         }
         // we found it
-        binary->mach_hdr = b_addrconv(binary, (addr_t) info.address);
-        if(!is_valid_range((prange_t) {binary->mach_hdr, 0x1000})) {
-            die("invalid mach_hdr offset");
-        }
+        binary->mach_hdr = macho_rangeconv((range_t) {binary, (addr_t) info.address, 0x1000}).start;
         break;
     }
     b_macho_load_symbols(binary);
@@ -204,7 +204,9 @@ void b_load_macho(struct binary *binary, const char *path) {
             struct segment_command *scmd = (void *) cmd;
             if(scmd->vmsize == 0) scmd->filesize = 0; // __CTF
             if(scmd->filesize != 0) {
-                if(mmap(b_addrconv(binary, scmd->vmaddr), scmd->filesize, PROT_READ, MAP_SHARED | MAP_FIXED, fd, fat_offset + scmd->fileoff) == MAP_FAILED) {
+                prange_t pr = rangeconv_checkof((range_t) {binary, scmd->vmaddr, scmd->filesize});
+                
+                if(mmap(pr.start, pr.size, PROT_READ, MAP_SHARED | MAP_FIXED, fd, fat_offset + scmd->fileoff) == MAP_FAILED) {
                     edie("could not map segment %.16s at %u+%u,%u", scmd->segname, scmd->fileoff, fat_offset, scmd->filesize);
                 }
             }
@@ -329,29 +331,48 @@ void b_running_kernel_load_macho(struct binary *binary) {
 range_t b_macho_segrange(const struct binary *binary, const char *segname) {
     CMD_ITERATE(binary->mach_hdr, cmd) {
         if(cmd->cmd == LC_SEGMENT) {
-            struct segment_command *scmd = (void *) cmd;
-            if(!strncmp(scmd->segname, segname, 16)) {
-                return (range_t) {binary, scmd->vmaddr, scmd->filesize};
+            struct segment_command *seg = (void *) cmd;
+            if(!strncmp(seg->segname, segname, 16)) {
+                // still semantically const
+                ((struct binary *) binary)->last_seg = seg;
+                return (range_t) {binary, seg->vmaddr, seg->filesize};
             }
         }
     }
     die("no such segment %s", segname);
 }
 
-void *b_macho_offconv(const struct binary *binary, uint32_t fileoff) {
-    CMD_ITERATE(binary->mach_hdr, cmd) {
-        if(cmd->cmd == LC_SEGMENT) {
-            struct segment_command *scmd = (void *) cmd;
-            if(fileoff >= scmd->fileoff && fileoff < scmd->fileoff + scmd->filesize) {
-                void *result = b_addrconv(binary, scmd->vmaddr + fileoff - scmd->fileoff);
-                if(!is_valid_address(result)) {
-                    die("invalid offset %u", fileoff);
-                }
-                return result;
-            }
-        }
+#define DEFINE_RANGECONV(name, field, intro) \
+prange_t name(range_t range) { \
+    struct segment_command *seg = range.binary->last_seg; \
+    if(seg && seg->field <= range.start && seg->filesize - (seg->field - range.start) >= range.size) { \
+        goto ok; \
+    } \
+    CMD_ITERATE(range.binary->mach_hdr, cmd) { \
+        if(cmd->cmd == LC_SEGMENT) { \
+            seg = (void *) cmd; \
+            if(seg && seg->field <= range.start && seg->filesize - (seg->field - range.start) >= range.size) { \
+                /* ditto */ \
+                ((struct binary *) (range.binary))->last_seg = seg; \
+                goto ok; \
+            } \
+        } \
+    } \
+    die(intro " (%08x, %zx) not valid", range.start, range.size); \
+    ok: \
+    return (prange_t) {b_addrconv_unsafe(range.binary, range.start), range.size}; \
+}
+
+#ifndef I_TRUST_YOU
+DEFINE_RANGECONV(macho_rangeconv, vmaddr, "range")
+#endif
+DEFINE_RANGECONV(macho_rangeconv_off, fileoff, "offset range")
+
+prange_t rangeconv_checkof(range_t range) {
+    if((range.size & ~0x0fffffff) || (((range.start & 0x0fffffff) + range.size) & ~0x0fffffff)) {
+        die("range (%08x, %zx) overflowing", range.start, range.size);
     }
-    die("file offset %u not in segment", fileoff);
+    return (prange_t) {b_addrconv_unsafe(range.binary, range.start), range.size};
 }
 
 // return value is |1 if to_execute is set and it is a thumb symbol
@@ -394,7 +415,7 @@ void b_macho_store(struct binary *binary, const char *path) {
         if(cmd->cmd == LC_SEGMENT) {
             struct segment_command *scmd = (void *) cmd;
             lseek(fd, scmd->fileoff, SEEK_SET);
-            if(write(fd, b_addrconv(binary, scmd->vmaddr), scmd->filesize) != scmd->filesize) {
+            if(write(fd, b_addrconv_unsafe(binary, scmd->vmaddr), scmd->filesize) != scmd->filesize) {
                 edie("couldn't write segment data");
             }
         }

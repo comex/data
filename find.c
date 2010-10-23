@@ -22,9 +22,9 @@ static addr_t find_data_int(range_t range, int16_t *buf, ssize_t pattern_size, s
     // I implemented the other half, but it actually made things /slower/
     buf += pattern_size - 1;
     addr_t foundit = 0;
-    uint8_t *start = (uint8_t *)b_addrconv(range.binary, range.start) + pattern_size - 1;
-    uint8_t *end = (uint8_t *)b_addrconv(range.binary, range.start + range.size);
-    uint8_t *cursor = start;
+    prange_t pr = macho_rangeconv(range);
+    uint8_t *start = pr.start, *cursor = start;
+    uint8_t *end = start + pr.size;
     while(cursor < end) {
         for(int i = 0; i >= (-pattern_size + 1); i--) {
             if(buf[i] != -1 && cursor[i] != buf[i]) {
@@ -113,8 +113,9 @@ addr_t find_string(range_t range, const char *string, int align, bool must_find)
 }
 
 addr_t find_int32(range_t range, uint32_t number, bool must_find) {
-    char *start = b_addrconv(range.binary, range.start);
-    char *end = b_addrconv(range.binary, range.start + range.size - 4);
+    prange_t pr = macho_rangeconv(range);
+    char *start = pr.start;
+    char *end = pr.start + pr.size;
     for(char *p = start; p < end; p++) {
         if(*((uint32_t *)p) == number) {
             return p - start + range.start;
@@ -149,24 +150,31 @@ addr_t find_bof(range_t range, addr_t eof, bool is_thumb) {
     // push {..., lr}; add r7, sp, ...
     addr_t addr = (eof - 1) & ~1;
     check_range_has_addr(range, addr);
+    prange_t pr = macho_rangeconv(range);
     if(is_thumb) {
         addr &= ~1;
+        uint8_t *p = pr.start + (addr - range.start);
         // xx b5 xx af
-        while(!(read8(range.binary, addr + 1) == 0xb5 && \
-                read8(range.binary, addr + 3) == 0xaf)) {
+        while(!(p[1] == 0xb5 && \
+                p[3] == 0xaf)) {
+            p -= 2;
             addr -= 2;
-            check_range_has_addr(range, addr);
+            if((void *)p < (void *)pr.start) goto fail;
         }
     } else {
         addr &= ~3;
+        uint16_t *p = pr.start + (addr - range.start);
         // xx xx 2d e9 xx xx 8d e2
-        while(!(read16(range.binary, addr + 2) == 0xe92d && \
-                read16(range.binary, addr + 6) == 0xe28d)) {
+        while(!(p[1] == 0xe92d && \
+                p[3] == 0xe28d)) {
+            p -= 2;
             addr -= 4;
-            check_range_has_addr(range, addr);
+            if((void *)p < (void *)pr.start) goto fail;
         }
     }
     return addr;
+    fail:
+    die("couldn't find the beginning of %08x", eof);
 }
 
 uint32_t resolve_ldr(struct binary *binary, addr_t addr) {
