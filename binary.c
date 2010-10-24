@@ -16,12 +16,15 @@ void b_init(struct binary *binary) {
     memset(binary, 0, sizeof(*binary));
 }
 
-static void *reserve_memory() {
-    void *result = mmap(NULL, 0x10000000, PROT_NONE, MAP_PRIVATE | MAP_ANON, -1, 0);
+static void b_reserve_memory(struct binary *binary, uint32_t minaddr, uint32_t maxaddr) {
+    if(minaddr > maxaddr) {
+        die("weird minaddr/maxaddr %08x, %08x", minaddr, maxaddr);
+    }
+    void *result = mmap(NULL, (size_t) (maxaddr - minaddr), PROT_NONE, MAP_PRIVATE | MAP_ANON, -1, 0);
     if(result == MAP_FAILED) {
         edie("could not do so");
     }
-    return result;
+    binary->load_base = (char *)result - minaddr;
 }
 
 void b_macho_load_symbols(struct binary *binary) {
@@ -88,16 +91,27 @@ void b_load_dyldcache(struct binary *binary, const char *path) {
         die("truncated");
     }
     do_dyld_hdr(binary);
+
     size_t sz = binary->dyld_mapping_count * sizeof(struct shared_file_mapping_np);
     binary->dyld_mappings = malloc(sz);
     if(pread(fd, binary->dyld_mappings, sz, binary->dyld_hdr->mappingOffset) != sz) {
         edie("could not read mappings");
     }
-    binary->load_base = reserve_memory();
+
+    uint32_t minaddr = (uint32_t) -1, maxaddr = 0;
     for(int i = 0; i < binary->dyld_mapping_count; i++) {
-        struct shared_file_mapping_np mapping = binary->dyld_mappings[i];
-        prange_t pr = rangeconv_checkof((range_t) {binary, (addr_t) mapping.sfm_address, (size_t) mapping.sfm_size});
-        if(mmap(pr.start, pr.size, PROT_READ, MAP_SHARED | MAP_FIXED, fd, (off_t) mapping.sfm_file_offset) == MAP_FAILED) {
+        struct shared_file_mapping_np *mapping = &binary->dyld_mappings[i];
+        addr_t address = (addr_t) mapping->sfm_address;
+        size_t size = (size_t) mapping->sfm_size;
+        if(address < minaddr) minaddr = address;
+        if((address + size) > maxaddr) maxaddr = address + size;
+    }
+    b_reserve_memory(binary, minaddr, maxaddr);
+
+
+    for(int i = 0; i < binary->dyld_mapping_count; i++) {
+        struct shared_file_mapping_np *mapping = &binary->dyld_mappings[i];
+        if(mmap(b_addrconv_unsafe(binary, (addr_t) mapping->sfm_address), (size_t) mapping->sfm_size, PROT_READ, MAP_SHARED | MAP_FIXED, fd, (off_t) mapping->sfm_file_offset) == MAP_FAILED) {
             edie("could not map segment %d of this crappy binary format", i);
         }
     }
@@ -173,7 +187,7 @@ prange_t name(range_t range) { \
         mok: \
         return (prange_t) {mreturn, range.size}; \
     } else { \
-        die("neither dyld_hdr nor mach_hdr"); \
+        die("neither dyld_hdr nor mach_hdr present"); \
     } \
     err: \
     die(intro " (%08x, %zx) not valid", range.start, range.size); \
@@ -188,7 +202,7 @@ DEFINE_RANGECONV(rangeconv_off, sfm_file_offset, fileoff, "offset range", \
     (char *)b_addrconv_unsafe(range.binary, sfm->sfm_address) + range.start - sfm->sfm_file_offset, \
     (char *)b_addrconv_unsafe(range.binary, seg->vmaddr) + range.start - seg->fileoff)
 
-void b_load_macho(struct binary *binary, const char *path) {
+void b_load_macho(struct binary *binary, const char *path, bool rw) {
 #define _arg path
     int fd = open(path, O_RDONLY);
     if(fd == -1) { 
@@ -241,16 +255,22 @@ void b_load_macho(struct binary *binary, const char *path) {
 
     binary->symtab = NULL;
 
-    binary->load_base = reserve_memory();
+    uint32_t minaddr = (uint32_t) -1, maxaddr = 0;
+    CMD_ITERATE(binary->mach_hdr, cmd) {
+        if(cmd->cmd == LC_SEGMENT) {
+            const struct segment_command *scmd = (void *) cmd;
+            if(scmd->vmaddr < minaddr) minaddr = scmd->vmaddr;
+            if((scmd->vmaddr + scmd->filesize) > maxaddr) maxaddr = scmd->vmaddr + scmd->filesize;
+        }
+    }
+    b_reserve_memory(binary, minaddr, maxaddr);
 
     CMD_ITERATE(binary->mach_hdr, cmd) {
         if(cmd->cmd == LC_SEGMENT) {
             struct segment_command *scmd = (void *) cmd;
             if(scmd->vmsize == 0) scmd->filesize = 0; // __CTF
             if(scmd->filesize != 0) {
-                prange_t pr = rangeconv_checkof((range_t) {binary, scmd->vmaddr, scmd->filesize});
-                
-                if(mmap(pr.start, pr.size, PROT_READ, MAP_SHARED | MAP_FIXED, fd, fat_offset + scmd->fileoff) == MAP_FAILED) {
+                if(mmap(b_addrconv_unsafe(binary, scmd->vmaddr), scmd->filesize, rw ? (PROT_READ | PROT_WRITE) : PROT_READ, MAP_PRIVATE | MAP_FIXED, fd, fat_offset + scmd->fileoff) == MAP_FAILED) {
                     edie("could not map segment %.16s at %u+%u,%u", scmd->segname, scmd->fileoff, fat_offset, scmd->filesize);
                 }
             }

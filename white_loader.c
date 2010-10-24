@@ -42,15 +42,14 @@ const uint32_t SLIDE_START = 0xf0000000;
 mach_port_t kernel_task;
 
 static struct binary *to_load, *kern;
-uint32_t slide;
-uint32_t reloc_base;
+static uint32_t slide;
+static uint32_t reloc_base;
 
-uint32_t sysent; // :<
+static uint32_t sysent; // :<
 
 kern_return_t kr_assert_(kern_return_t kr, const char *name, int line) {
     if(kr) {
-        fprintf(stderr, "kr_assert: result=%08x on line %d:\n%s\n", kr, line, name);
-        assert(false);
+        die("result=%08x on line %d:\n%s", kr, line, name);
     }
     return kr;
 }
@@ -64,7 +63,7 @@ uint32_t lookup_sym(char *sym) {
 void do_kern(const char *filename) {
     kern = malloc(sizeof(*kern));
     b_init(kern);
-    b_load_macho(kern, filename);
+    b_load_macho(kern, filename, false);
 
     CMD_ITERATE(kern->mach_hdr, cmd) {
         if(cmd->cmd == LC_SEGMENT) {
@@ -100,11 +99,10 @@ void relocate(uint32_t reloff, uint32_t nreloc) {
         uint32_t thing = reloc_base + things[i].r_address;
         uint32_t *p = rangeconv((range_t) {to_load, thing, 4}).start;
         if(things[i].r_extern) {
-            uint32_t sym = things[i].r_symbolnum;
-            *p += lookup_sym(to_load->strtab + to_load->symtab[sym].n_un.n_strx);
+            uint32_t sym = lookup_sym(to_load->strtab + to_load->symtab[things[i].r_symbolnum].n_un.n_strx);
+            *p += sym;
         } else {
             // *shrug*
-            printf("%08x: %08x -> %08x\n", thing, *p, *p + slide);
             *p += slide;
         }
     }
@@ -116,7 +114,7 @@ void do_kcode(const char *filename, uint32_t prelink_slide, const char *prelink_
     }
     to_load = malloc(sizeof(*to_load));
     b_init(to_load);
-    b_load_macho(to_load, filename);
+    b_load_macho(to_load, filename, true);
 
     CMD_ITERATE(to_load->mach_hdr, cmd) {
         switch(cmd->cmd) {
@@ -127,8 +125,7 @@ void do_kcode(const char *filename, uint32_t prelink_slide, const char *prelink_
         case LC_UUID:
             break;
         default:
-            fprintf(stderr, "unrecognized load command %08x\n", cmd->cmd);
-            assert(false);
+            die("unrecognized load command %08x", cmd->cmd);
         }
     }
     assert(to_load->symtab);
@@ -144,15 +141,11 @@ void do_kcode(const char *filename, uint32_t prelink_slide, const char *prelink_
                 if(seg->vmsize == 0) continue;
                 vm_address_t address = seg->vmaddr;
                 printf("allocate %08x %08x\n", (int) address, (int) seg->vmsize);
-                kern_return_t kr = vm_allocate(kernel_task,
-                                               &address,
-                                               seg->vmsize,
-                                               VM_FLAGS_FIXED);
+                kr_assert(vm_allocate(kernel_task,
+                                      &address,
+                                      seg->vmsize,
+                                      VM_FLAGS_FIXED));
 
-                if(kr) {
-                    fprintf(stderr, "allocation failed :(\n");
-                    assert(false);
-                }
                 assert(address == seg->vmaddr);
             }
         }
@@ -194,8 +187,7 @@ void do_kcode(const char *filename, uint32_t prelink_slide, const char *prelink_
         }
     }
     // But if we got this far, we ran out of slides to try.
-    fprintf(stderr, "we couldn't find anywhere to put this thing and that is ridiculous\n");
-    assert(false);
+    die("we couldn't find anywhere to put this thing and that is ridiculous");
     it_worked:;
     printf("slide=%x\n", slide);
 
@@ -207,13 +199,11 @@ void do_kcode(const char *filename, uint32_t prelink_slide, const char *prelink_
             if(cmd->cmd == LC_SEGMENT) {
                 struct segment_command *seg = (void *) cmd;
                 to_load->last_seg = seg;
-                seg->vmaddr += slide;
                 if(!reloc_base) reloc_base = seg->vmaddr;
                 printf("%.16s %08x\n", seg->segname, seg->vmaddr);
                 struct section *sections = (void *) (seg + 1);
                 for(int i = 0; i < seg->nsects; i++) {
                     struct section *sect = &sections[i];
-                    sect->addr += slide;
                     printf("   %.16s\n", sect->sectname);
                     uint8_t type = sect->flags & SECTION_TYPE;
                     switch(type) {
@@ -231,9 +221,11 @@ void do_kcode(const char *filename, uint32_t prelink_slide, const char *prelink_
                             case INDIRECT_SYMBOL_ABS:
                                 break;
                             default:
+                                if(sym >= to_load->nsyms) {
+                                    die("sym too high: %u", sym);
+                                }
                                 things[i] = lookup_sym(to_load->strtab + to_load->symtab[sym].n_un.n_strx);
                             }
-                            //printf("%p -> %x\n", &things[i], things[i]);
                         }
                         break;
                     }
@@ -251,8 +243,7 @@ void do_kcode(const char *filename, uint32_t prelink_slide, const char *prelink_
                     case S_16BYTE_LITERALS:
                         break;
                     default:
-                        fprintf(stderr, "unrecognized section type %02x\n", type);
-                        assert(false);
+                        die("unrecognized section type %02x", type);
                     }
                     
                     // XXX: are these relocations unique, or listed also in the dysymtab?
@@ -260,7 +251,9 @@ void do_kcode(const char *filename, uint32_t prelink_slide, const char *prelink_
                     assert(sect->nreloc == 0);
 
                     relocate(sect->reloff, sect->nreloc);
+                    sect->addr += slide;
                 }
+                seg->vmaddr += slide;
             }
         }
     }
@@ -270,11 +263,14 @@ void do_kcode(const char *filename, uint32_t prelink_slide, const char *prelink_
         b_macho_store(to_load, prelink_output);
     }
 
+    to_load->load_base = (char *)to_load->load_base - slide;
+
     CMD_ITERATE(to_load->mach_hdr, cmd) {
         if(cmd->cmd == LC_SEGMENT) {
             struct segment_command *seg = (void *) cmd;
             int32_t fs = seg->filesize;
             if(seg->vmsize < fs) fs = seg->vmsize;
+            // if prebound, slide = 0
             vm_offset_t of = (vm_offset_t) b_addrconv_unsafe(to_load, seg->vmaddr);
             vm_address_t ad = seg->vmaddr;
             struct section *sections = (void *) (seg + 1);
@@ -291,7 +287,7 @@ void do_kcode(const char *filename, uint32_t prelink_slide, const char *prelink_
             }
             while(fs > 0) {
                 // complete headbang.
-                printf("(%.16s) reading %x %08x -> %08x\n", seg->segname, fs, (uint32_t) of, (uint32_t) ad);
+                //printf("(%.16s) reading %x %08x -> %08x\n", seg->segname, fs, (uint32_t) of, (uint32_t) ad);
                 uint32_t tocopy = 0xfff;
                 if(fs < tocopy) tocopy = fs;
                 kr_assert(vm_write(kernel_task,
@@ -380,8 +376,7 @@ void unload_kcode(uint32_t addr) {
                          0x1000,
                          (vm_offset_t) hdr,
                          &whatever) == KERN_INVALID_ADDRESS) {
-        fprintf(stderr, "invalid address %08x\n", addr);
-        assert(false);
+        die("invalid address %08x", addr);
     }
     kr_assert(vm_read_overwrite(kernel_task,
                                 (vm_address_t) addr,

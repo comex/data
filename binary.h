@@ -44,7 +44,7 @@ __attribute__((const)) prange_t rangeconv_off(range_t range);
 
 __attribute__((const, always_inline))
 static inline void *b_addrconv_unsafe(const struct binary *binary, addr_t addr) {
-    return (void *) ((char *)binary->load_base + (addr & 0x0fffffff));
+    return (void *) ((char *)binary->load_base + addr);
 }
 
 void b_init(struct binary *binary);
@@ -56,7 +56,7 @@ void b_dyldcache_load_macho(struct binary *binary, const char *filename);
 
 void b_running_kernel_load_macho(struct binary *binary);
 void b_macho_load_symbols(struct binary *binary);
-void b_load_macho(struct binary *binary, const char *path);
+void b_load_macho(struct binary *binary, const char *path, bool rw);
 __attribute__((pure)) range_t b_macho_segrange(const struct binary *binary, const char *segname);
 void b_macho_store(struct binary *binary, const char *path);
 
