@@ -133,14 +133,13 @@ void do_kcode(const char *filename, uint32_t prelink_slide, const char *prelink_
 
     if(prelink_output) {
         slide = prelink_slide;
-        goto it_worked;
     } else if(to_load->mach_hdr->flags & MH_PREBOUND) {
         CMD_ITERATE(to_load->mach_hdr, cmd) {
             if(cmd->cmd == LC_SEGMENT) {
                 struct segment_command *seg = (void *) cmd;
                 if(seg->vmsize == 0) continue;
                 vm_address_t address = seg->vmaddr;
-                printf("allocate %08x %08x\n", (int) address, (int) seg->vmsize);
+                printf("allocate %08x %08x\n", (unsigned int) address, (unsigned int) seg->vmsize);
                 kr_assert(vm_allocate(kernel_task,
                                       &address,
                                       seg->vmsize,
@@ -185,10 +184,10 @@ void do_kcode(const char *filename, uint32_t prelink_slide, const char *prelink_
             goto it_worked;
             try_another_slide:;
         }
+        // But if we got this far, we ran out of slides to try.
+        die("we couldn't find anywhere to put this thing and that is ridiculous");
+        it_worked:;
     }
-    // But if we got this far, we ran out of slides to try.
-    die("we couldn't find anywhere to put this thing and that is ridiculous");
-    it_worked:;
     printf("slide=%x\n", slide);
 
     if(!(to_load->mach_hdr->flags & MH_PREBOUND)) {
@@ -258,12 +257,13 @@ void do_kcode(const char *filename, uint32_t prelink_slide, const char *prelink_
         }
     }
 
+    to_load->load_base = (char *)to_load->load_base - slide;
+
     if(prelink_output) {
         to_load->mach_hdr->flags |= MH_PREBOUND;
         b_macho_store(to_load, prelink_output);
+        return;
     }
-
-    to_load->load_base = (char *)to_load->load_base - slide;
 
     CMD_ITERATE(to_load->mach_hdr, cmd) {
         if(cmd->cmd == LC_SEGMENT) {
@@ -424,11 +424,12 @@ void unload_kcode(uint32_t addr) {
             }
         }
     }
+    free(hdr);
 }
 
 #define parse_hex(arg) ({char *_end; uint32_t _r = (uint32_t) strtoll((arg), &_end, 16); if(*_end) { fprintf(stderr, "error: bad hex string %s\n", (arg)); goto usage; } _r;})
 int main(int argc, char **argv) {
-    bool did_kern;
+    bool did_kern = false;
     argv++;
     while(1) {
         char *arg = *argv++;

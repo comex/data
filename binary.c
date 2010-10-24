@@ -202,11 +202,12 @@ DEFINE_RANGECONV(rangeconv_off, sfm_file_offset, fileoff, "offset range", \
 
 void b_load_macho(struct binary *binary, const char *path, bool rw) {
 #define _arg path
+    struct mach_header *mach_hdr;
     int fd = open(path, O_RDONLY);
     if(fd == -1) { 
         edie("could not open");
     }
-    void *fhdr = mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
+    void *fhdr = mmap(NULL, 0x1000, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
     if(fhdr == MAP_FAILED) {
         edie("could not map file header");
     }
@@ -214,8 +215,8 @@ void b_load_macho(struct binary *binary, const char *path, bool rw) {
     uint32_t fat_offset;
     if(magic == MH_MAGIC) {
         // thin file
-        binary->mach_hdr = fhdr;
-        if(binary->mach_hdr->cputype != desired_cputype || (binary->mach_hdr->cpusubtype != 0 && desired_cpusubtype != 0 && binary->mach_hdr->cpusubtype != desired_cpusubtype)) {
+        mach_hdr = fhdr;
+        if(mach_hdr->cputype != desired_cputype || (mach_hdr->cpusubtype != 0 && desired_cpusubtype != 0 && mach_hdr->cpusubtype != desired_cpusubtype)) {
             die("thin file doesn't have the right architecture");
         }
         fat_offset = 0;
@@ -226,15 +227,15 @@ void b_load_macho(struct binary *binary, const char *path, bool rw) {
         struct fat_header *fathdr = fhdr;
         struct fat_arch *arch = (void *)(fathdr + 1);
         uint32_t nfat_arch = fathdr->nfat_arch;
-        if(sizeof(struct fat_header) + nfat_arch * sizeof(struct fat_arch) >= 4096) {
+        if(sizeof(struct fat_header) + nfat_arch * sizeof(struct fat_arch) >= 0x1000) {
             die("fat header is too big");
         }
         while(nfat_arch--) {
             if(arch->cputype == desired_cputype && (arch->cpusubtype == 0 || arch->cpusubtype == desired_cpusubtype)) {
-                munmap(fhdr, 4096);
+                munmap(fhdr, 0x1000);
                 fat_offset = arch->offset;
-                binary->mach_hdr = mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, fat_offset);
-                if(binary->mach_hdr == MAP_FAILED) {
+                mach_hdr = mmap(NULL, 0x1000, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, fat_offset);
+                if(mach_hdr == MAP_FAILED) {
                     edie("could not map mach-o header from fat file", path);
                 }
                 break;
@@ -245,16 +246,16 @@ void b_load_macho(struct binary *binary, const char *path, bool rw) {
         die("(%08x) what is this I don't even", magic);
     }
 
-    binary->actual_cpusubtype = binary->mach_hdr->cpusubtype;
+    binary->actual_cpusubtype = mach_hdr->cpusubtype;
 
-    if(binary->mach_hdr->sizeofcmds > 4096 - sizeof(*binary->mach_hdr)) {
+    if(mach_hdr->sizeofcmds > 0x1000 - sizeof(*mach_hdr)) {
         die("sizeofcmds is too big");
     }
 
     binary->symtab = NULL;
 
     uint32_t minaddr = (uint32_t) -1, maxaddr = 0;
-    CMD_ITERATE(binary->mach_hdr, cmd) {
+    CMD_ITERATE(mach_hdr, cmd) {
         if(cmd->cmd == LC_SEGMENT) {
             const struct segment_command *scmd = (void *) cmd;
             if(scmd->vmaddr < minaddr) minaddr = scmd->vmaddr;
@@ -263,7 +264,7 @@ void b_load_macho(struct binary *binary, const char *path, bool rw) {
     }
     b_reserve_memory(binary, minaddr, maxaddr);
 
-    CMD_ITERATE(binary->mach_hdr, cmd) {
+    CMD_ITERATE(mach_hdr, cmd) {
         if(cmd->cmd == LC_SEGMENT) {
             struct segment_command *scmd = (void *) cmd;
             if(scmd->vmsize == 0) scmd->filesize = 0; // __CTF
@@ -272,8 +273,13 @@ void b_load_macho(struct binary *binary, const char *path, bool rw) {
                     edie("could not map segment %.16s at %u+%u,%u", scmd->segname, scmd->fileoff, fat_offset, scmd->filesize);
                 }
             }
+            if(scmd->fileoff == 0) {
+                binary->mach_hdr = b_addrconv_unsafe(binary, scmd->vmaddr);
+            }
         }
     }
+
+    munmap(mach_hdr, 0x1000);
     
     b_macho_load_symbols(binary);
 #undef _arg
