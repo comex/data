@@ -193,11 +193,9 @@ prange_t name(range_t range) { \
     die(intro " (%08x, %zx) not valid", range.start, range.size); \
 }
 
-#ifndef I_TRUST_YOU
 DEFINE_RANGECONV(rangeconv, sfm_address, vmaddr, "range", \
     b_addrconv_unsafe(range.binary, range.start), \
     b_addrconv_unsafe(range.binary, range.start))
-#endif
 DEFINE_RANGECONV(rangeconv_off, sfm_file_offset, fileoff, "offset range", \
     (char *)b_addrconv_unsafe(range.binary, sfm->sfm_address) + range.start - sfm->sfm_file_offset, \
     (char *)b_addrconv_unsafe(range.binary, seg->vmaddr) + range.start - seg->fileoff)

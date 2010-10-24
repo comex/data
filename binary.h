@@ -29,17 +29,11 @@ struct binary {
 };
 
 
-//#define I_TRUST_YOU
-
 // check for start + size exceeding the range
 __attribute__((const))
 prange_t rangeconv_checkof(range_t range);
 
-#ifdef I_TRUST_YOU
-#define rangeconv rangeconv_checkof
-#else
 __attribute__((const)) prange_t rangeconv(range_t range);
-#endif
 __attribute__((const)) prange_t rangeconv_off(range_t range);
 
 __attribute__((const, always_inline))

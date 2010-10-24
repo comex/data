@@ -153,7 +153,7 @@ int main(int argc, char **argv) {
         write_range(bar(&binary), "libgmalloc.dylib", 0644);
         return 0;
     case 'k':
-        b_load_macho(&binary, argv[2]);
+        b_load_macho(&binary, argv[2], false);
         write_range(foo(&binary), "pf2", 0755);
         return 0;
     case 'K':
