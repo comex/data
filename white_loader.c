@@ -299,16 +299,17 @@ void do_kcode(const char *filename, uint32_t prelink_slide, const char *prelink_
                 ad += tocopy;
             }
             if(seg->vmsize > 0) {
+                // This really depends on nx_disabled...
                 kr_assert(vm_protect(kernel_task,
                                      seg->vmaddr,
                                      seg->vmsize,
                                      true,
-                                     seg->maxprot));
+                                     seg->maxprot & ~VM_PROT_EXECUTE));
                 kr_assert(vm_protect(kernel_task,
                                      seg->vmaddr,
                                      seg->vmsize,
                                      false,
-                                     seg->initprot));
+                                     seg->initprot & ~VM_PROT_EXECUTE));
 
                 vm_machine_attribute_val_t val = MATTR_VAL_CACHE_FLUSH;
                 kr_assert(vm_machine_attribute(kernel_task,
