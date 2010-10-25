@@ -23,3 +23,32 @@ void check_range_has_addr(range_t range, addr_t addr) {
     }
 }
 
+static inline bool parse_hex_digit(char digit, uint8_t *result) {
+    if(digit >= '0' && digit <= '9') {
+        *result = digit - '0';
+        return true;
+    } else if(digit >= 'a' && digit <= 'f') {
+        *result = 10 + (digit - 'a');
+        return true;
+    }
+    return false;
+}
+
+prange_t parse_hex_string(char *string) {
+    size_t len = strlen(string);
+    if(len % 2) goto bad;
+    len /= 2;
+    uint8_t *buf = malloc(len);
+    prange_t result = (prange_t) {buf, len};
+    while(len--) {
+        char first = *string++;
+        char second = *string++;
+        uint8_t a, b;
+        if(!parse_hex_digit(first, &a)) goto bad;
+        if(!parse_hex_digit(second, &b)) goto bad;
+        *buf++ = (a * 0x10) + b;
+    }
+    return result;
+    bad:
+    die("bad hex string %s", string);
+}

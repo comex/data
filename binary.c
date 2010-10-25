@@ -200,14 +200,13 @@ DEFINE_RANGECONV(rangeconv_off, sfm_file_offset, fileoff, "offset range", \
     (char *)b_addrconv_unsafe(range.binary, sfm->sfm_address) + range.start - sfm->sfm_file_offset, \
     (char *)b_addrconv_unsafe(range.binary, seg->vmaddr) + range.start - seg->fileoff)
 
-void b_load_macho(struct binary *binary, const char *path, bool rw) {
+typedef void *(*almost_mmap_func)(void *, size_t, int, int, uintptr_t, off_t);
+typedef int (*munmap_func)(void *, size_t);
+
+static void b_load_macho_m(struct binary *binary, const char *path, uintptr_t fd, bool rw, almost_mmap_func mm, munmap_func mum) {
 #define _arg path
     struct mach_header *mach_hdr;
-    int fd = open(path, O_RDONLY);
-    if(fd == -1) { 
-        edie("could not open");
-    }
-    void *fhdr = mmap(NULL, 0x1000, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
+    void *fhdr = (*mm)(NULL, 0x1000, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
     if(fhdr == MAP_FAILED) {
         edie("could not map file header");
     }
@@ -232,9 +231,9 @@ void b_load_macho(struct binary *binary, const char *path, bool rw) {
         }
         while(nfat_arch--) {
             if(arch->cputype == desired_cputype && (arch->cpusubtype == 0 || arch->cpusubtype == desired_cpusubtype)) {
-                munmap(fhdr, 0x1000);
+                (*mum)(fhdr, 0x1000);
                 fat_offset = arch->offset;
-                mach_hdr = mmap(NULL, 0x1000, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, fat_offset);
+                mach_hdr = (*mm)(NULL, 0x1000, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, fat_offset);
                 if(mach_hdr == MAP_FAILED) {
                     edie("could not map mach-o header from fat file", path);
                 }
@@ -269,7 +268,7 @@ void b_load_macho(struct binary *binary, const char *path, bool rw) {
             struct segment_command *scmd = (void *) cmd;
             if(scmd->vmsize == 0) scmd->filesize = 0; // __CTF
             if(scmd->filesize != 0) {
-                if(mmap(b_addrconv_unsafe(binary, scmd->vmaddr), scmd->filesize, rw ? (PROT_READ | PROT_WRITE) : PROT_READ, MAP_PRIVATE | MAP_FIXED, fd, fat_offset + scmd->fileoff) == MAP_FAILED) {
+                if((*mm)(b_addrconv_unsafe(binary, scmd->vmaddr), scmd->filesize, rw ? (PROT_READ | PROT_WRITE) : PROT_READ, MAP_PRIVATE | MAP_FIXED, fd, fat_offset + scmd->fileoff) == MAP_FAILED) {
                     edie("could not map segment %.16s at %u+%u,%u", scmd->segname, scmd->fileoff, fat_offset, scmd->filesize);
                 }
             }
@@ -279,11 +278,65 @@ void b_load_macho(struct binary *binary, const char *path, bool rw) {
         }
     }
 
-    munmap(mach_hdr, 0x1000);
+    (*mum)(mach_hdr, 0x1000);
     
     b_macho_load_symbols(binary);
 #undef _arg
 }
+
+static void *almost_mmap(void *addr, size_t len, int prot, int flags, uintptr_t fd, off_t offset) {
+    return mmap(addr, len, prot, flags, (int) fd, offset);
+}
+
+void b_load_macho(struct binary *binary, const char *path, bool rw) {
+    int fd = open(path, O_RDONLY);
+    if(fd == -1) { 
+        edie("could not open");
+    }
+    b_load_macho_m(binary, path, fd, rw, &almost_mmap, &munmap);
+}
+
+#ifdef IMG3_SUPPORT
+#include <mach/mach.h>
+static void *fake_mmap(void *addr, size_t len, int prot, int flags, uintptr_t fd, off_t offset) {
+    vm_address_t address = (vm_address_t) addr;
+    vm_prot_t c, m;
+    prange_t *pr = (void *) fd;
+
+    if(flags & MAP_FIXED) {
+        munmap((void *)addr, len);
+    }
+
+    kern_return_t kr = vm_remap(mach_task_self(), &address, (vm_size_t) ((len + 0xfff) & ~0xfff), 0xfff, !(flags & MAP_FIXED), mach_task_self(), (vm_address_t)pr->start + offset, true, &c, &m, VM_INHERIT_NONE);
+    if(kr) {
+        switch(kr) {
+        case KERN_INVALID_ADDRESS: errno = EINVAL; break;
+        case KERN_NO_SPACE: errno = ENOMEM; break;
+        case KERN_PROTECTION_FAILURE: errno = EACCES; break;
+        }
+        return MAP_FAILED;
+    } else if(!(c & VM_PROT_READ)) {
+        errno = EACCES;
+        return MAP_FAILED;
+    } else {
+        return (void *) address;
+    }
+}
+
+static int fake_munmap(void *addr, size_t len) {
+    kern_return_t kr = vm_deallocate(mach_task_self(), (mach_vm_address_t) addr, (mach_vm_size_t) len);
+    if(!kr) {
+        return 0;
+    } else {
+        errno = EINVAL;
+        return -1;
+    }
+}
+
+void b_prange_load_macho(struct binary *binary, prange_t range, bool rw) {
+    b_load_macho_m(binary, "(buffer)", (uintptr_t) &range, rw, &fake_mmap, &fake_munmap);
+}
+#endif
 
 void b_running_kernel_load_macho(struct binary *binary) {
 #ifdef __APPLE__

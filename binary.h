@@ -51,6 +51,10 @@ void b_dyldcache_load_macho(struct binary *binary, const char *filename);
 void b_running_kernel_load_macho(struct binary *binary);
 void b_macho_load_symbols(struct binary *binary);
 void b_load_macho(struct binary *binary, const char *path, bool rw);
+#ifdef IMG3_SUPPORT
+void b_prange_load_macho(struct binary *binary, prange_t range, bool rw);
+#endif
+
 __attribute__((pure)) range_t b_macho_segrange(const struct binary *binary, const char *segname);
 void b_macho_store(struct binary *binary, const char *path);
 

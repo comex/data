@@ -1,6 +1,7 @@
 #include "common.h"
 #include "find.h"
 #include "binary.h"
+#include "cc.h"
 extern unsigned char pf2_bin[], one_bin[];
 extern unsigned int pf2_bin_len, one_bin_len;
 
@@ -144,24 +145,47 @@ int main(int argc, char **argv) {
     struct binary binary;
     b_init(&binary);
     switch(argv[1][1]) {
-    case 'C':
+    case 'C': {
         b_load_running_dyldcache(&binary, (void *) 0x30000000);
         write_range(bar(&binary), "libgmalloc.dylib", 0644);
         return 0;
-    case 'c':
+    }
+    case 'c': {
+        if(argc <= 2) goto usage;
         b_load_dyldcache(&binary, argv[2]);
         write_range(bar(&binary), "libgmalloc.dylib", 0644);
         return 0;
-    case 'k':
+    }
+    case 'k': {
+        if(argc <= 2) goto usage;
         b_load_macho(&binary, argv[2], false);
         write_range(foo(&binary), "pf2", 0755);
         return 0;
-    case 'K':
+    }
+    case 'K': {
         b_running_kernel_load_macho(&binary);  
         write_range(foo(&binary), "pf2", 0755);
         return 0;
     }
+#ifdef IMG3_SUPPORT
+    case 'i': {
+        if(argc <= 4) goto usage;
+        uint32_t key_bits;
+        prange_t key = parse_hex_string(argv[3]);
+        prange_t iv = parse_hex_string(argv[4]);
+        prange_t data = parse_img3_file(argv[2], &key_bits);
+        prange_t kern = decrypt_and_decompress(key_bits, key, iv, data);
+        b_prange_load_macho(&binary, kern, false);
+        write_range(foo(&binary), "pf2", 0755);
+        return 0;
+    }
+#endif
+    }
     usage:
-    fprintf(stderr, "Usage: data -c cache | -k kernel | -C cache | -K\n");
+    fprintf(stderr, "Usage: data -c cache | -k kernel | -C cache | -K"
+#ifdef IMG3_SUPPORT
+    " | -i kernel_img3 key iv"
+#endif
+    "\n");
     return 1;
 }
