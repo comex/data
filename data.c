@@ -125,7 +125,7 @@ prange_t foo(struct binary *binary) {
     preplace32(pf2, 0xfedd0018, b_sym(binary, "_PE_i_can_has_debugger", false));
 
     // task_for_pid 0
-    preplace32(pf2, 0xfedd0009, find_data(b_macho_segrange(binary, "__TEXT"), is_armv7 ? "85 68 00 23 .. 93 .. 93 - .. .. .. .. 29 46 04 22" : "85 68 .. 93 .. 93 - 00 2c 0b d1", 0, true));
+    preplace32(pf2, 0xfedd0009, find_data(b_macho_segrange(binary, "__TEXT"), is_armv7 ? "85 68 00 23 .. 93 .. 93 - 5c b9 .. .. 29 46 04 22" : "85 68 .. 93 .. 93 00 2c - 0b d1", 0, true));
         
     // cs_enforcement_disable
     preplace32(pf2, 0xfedd0001, resolve_ldr(binary, find_data(b_macho_segrange(binary, "__TEXT"), is_armv7 ? "1d ee 90 3f d3 f8 4c 33 d3 f8 9c 20 + .. .. .. .. 19 68 00 29" : "9c 22 03 59 99 58 + .. .. 1a 68 00 2a", 0, true)));
