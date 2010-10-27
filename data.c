@@ -25,8 +25,9 @@ addr_t find_kinit(struct binary *binary, uint32_t cond) {
         uint32_t *p = rangeconv(range).start;
         for(addr_t addr = range.start; addr + 4 <= (range.start + range.size); addr += 4) {
             // <3 http://a.qoid.us/01x.py
+            // fun fact: on armv6 this is actually UNPREDICTABLE
             uint32_t val = *p++;
-            if((val & 0xfdfe000) != 0x99ba000) continue;
+            if((val & 0xf9fe000) != 0x99ba000) continue;
             uint32_t actual_cond = ((val & 0xf0000000) >> 28);
             if(actual_cond != cond) continue;
             uint32_t reglist = val & 0x1fff;
@@ -112,7 +113,6 @@ prange_t foo(struct binary *binary) {
     addr_t sysent_patch_orig = read32(binary, sysent + 4);
     preplace32(pf2, 0xfedd0005, sysent_patch_orig);
     // target_addr
-    printf("sysent_patch_orig = %x %x\n", sysent, sysent_patch_orig);
     preplace32(pf2, 0xfedd0006, (sysent_patch_orig & 0x00ffffff) | 0x2f000000);
 
     // vm_map_enter (patch1) - allow RWX pages
@@ -126,7 +126,9 @@ prange_t foo(struct binary *binary) {
     preplace32(pf2, 0xfedd0018, b_sym(binary, "_PE_i_can_has_debugger", false));
 
     // task_for_pid 0
-    preplace32(pf2, 0xfedd0009, find_data(b_macho_segrange(binary, "__TEXT"), is_armv7 ? "85 68 00 23 .. 93 .. 93 - 5c b9 .. .. 29 46 04 22" : "85 68 .. 93 .. 93 00 2c - 0b d1", 0, true));
+    preplace32(pf2, 0xfedd0009, find_data(b_macho_segrange(binary, "__TEXT"), is_armv7 ? "85 68 00 23 .. 93 .. 93 - 5c b9 .. .. 29 46 04 22" : "85 68 .. 93 .. 93 - 00 2c 0b d1", 0, true));
+    // this is necessary so a reboot isn't required after using the screwed up version
+    preplace32(pf2, 0xfedd0020, is_armv7 ? 0x46c0e00b : 0xe00b2c00);
         
     // cs_enforcement_disable
     preplace32(pf2, 0xfedd0001, resolve_ldr(binary, find_data(b_macho_segrange(binary, "__TEXT"), is_armv7 ? "1d ee 90 3f d3 f8 4c 33 d3 f8 9c 20 + .. .. .. .. 19 68 00 29" : "9c 22 03 59 99 58 + .. .. 1a 68 00 2a", 0, true)));
@@ -144,28 +146,33 @@ int main(int argc, char **argv) {
     if(argc <= 1 || argv[1][0] != '-') goto usage;
     struct binary binary;
     b_init(&binary);
+    char **p;
     switch(argv[1][1]) {
     case 'C': {
         b_load_running_dyldcache(&binary, (void *) 0x30000000);
         write_range(bar(&binary), "libgmalloc.dylib", 0644);
-        return 0;
+        p = &argv[2];
+        break;
     }
     case 'c': {
         if(argc <= 2) goto usage;
         b_load_dyldcache(&binary, argv[2]);
         write_range(bar(&binary), "libgmalloc.dylib", 0644);
-        return 0;
+        p = &argv[3];
+        break;
     }
     case 'k': {
         if(argc <= 2) goto usage;
         b_load_macho(&binary, argv[2], false);
         write_range(foo(&binary), "pf2", 0755);
-        return 0;
+        p = &argv[3];
+        break;
     }
     case 'K': {
         b_running_kernel_load_macho(&binary);  
         write_range(foo(&binary), "pf2", 0755);
-        return 0;
+        p = &argv[2];
+        break;
     }
 #ifdef IMG3_SUPPORT
     case 'i': {
@@ -177,15 +184,24 @@ int main(int argc, char **argv) {
         prange_t kern = decrypt_and_decompress(key_bits, key, iv, data);
         b_prange_load_macho(&binary, kern, false);
         write_range(foo(&binary), "pf2", 0755);
-        return 0;
+        p = &argv[5];
+        break;
     }
 #endif
+    default:
+        goto usage;
     }
+    // not really data's purpose, oh well
+    if(*p && !strcmp(*p, "-8")) {
+        addr_t addr = find_data(b_macho_segrange(&binary, "__TEXT"), "- 08 00 10 00", 1, true);
+        printf("%08x\n", addr);
+    }
+    return 0;
     usage:
-    fprintf(stderr, "Usage: data -c cache | -k kernel | -C | -K"
+    fprintf(stderr, "Usage: data (-c cache | -C) | (-k kernel | -K"
 #ifdef IMG3_SUPPORT
     " | -i kernel_img3 key iv"
 #endif
-    "\n");
+    ") [-8]\n");
     return 1;
 }

@@ -444,6 +444,7 @@ void b_running_kernel_load_macho(struct binary *binary) {
 
     load_base = (void *) (mine - 0x1000);
 */
+    mach_port_deallocate(mach_task_self(), kernel_task);
 #else
     die("load_running_kernel: not on Apple");
 #endif
