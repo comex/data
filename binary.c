@@ -119,7 +119,8 @@ void b_load_dyldcache(struct binary *binary, const char *path) {
 }
 
 void b_load_running_dyldcache(struct binary *binary, void *baseaddr) {
-    binary->dyld_hdr = binary->load_base = baseaddr;
+    binary->dyld_hdr = baseaddr;
+    binary->load_base = NULL;
     do_dyld_hdr(binary);
     binary->dyld_mappings = (void *) ((char *)binary->dyld_hdr + binary->dyld_hdr->mappingOffset);
 }

@@ -182,7 +182,7 @@ int main(int argc, char **argv) {
 #endif
     }
     usage:
-    fprintf(stderr, "Usage: data -c cache | -k kernel | -C cache | -K"
+    fprintf(stderr, "Usage: data -c cache | -k kernel | -C | -K"
 #ifdef IMG3_SUPPORT
     " | -i kernel_img3 key iv"
 #endif
