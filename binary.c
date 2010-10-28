@@ -264,19 +264,26 @@ static void b_load_macho_m(struct binary *binary, const char *path, uintptr_t fd
     }
     b_reserve_memory(binary, minaddr, maxaddr);
 
+    binary->mach_hdr = NULL;
+
     CMD_ITERATE(mach_hdr, cmd) {
         if(cmd->cmd == LC_SEGMENT) {
             struct segment_command *scmd = (void *) cmd;
             if(scmd->vmsize == 0) scmd->filesize = 0; // __CTF
             if(scmd->filesize != 0) {
-                if((*mm)(b_addrconv_unsafe(binary, scmd->vmaddr), scmd->filesize, rw ? (PROT_READ | PROT_WRITE) : PROT_READ, MAP_PRIVATE | MAP_FIXED, fd, fat_offset + scmd->fileoff) == MAP_FAILED) {
-                    edie("could not map segment %.16s at %u+%u,%u", scmd->segname, scmd->fileoff, fat_offset, scmd->filesize);
+                void *target_addr = b_addrconv_unsafe(binary, scmd->vmaddr);
+                if((*mm)(target_addr, scmd->filesize, rw ? (PROT_READ | PROT_WRITE) : PROT_READ, MAP_PRIVATE | MAP_FIXED, fd, fat_offset + scmd->fileoff) == MAP_FAILED) {
+                    edie("could not map segment %.16s at %u+%u,%u --> %p", scmd->segname, scmd->fileoff, fat_offset, scmd->filesize, target_addr);
                 }
             }
-            if(scmd->fileoff == 0) {
+            if(scmd->fileoff == 0 && scmd->filesize >= 0x1000) {
                 binary->mach_hdr = b_addrconv_unsafe(binary, scmd->vmaddr);
             }
         }
+    }
+    
+    if(!binary->mach_hdr) {
+        die("no mach_hdr segment");
     }
 
     (*mum)(mach_hdr, 0x1000);

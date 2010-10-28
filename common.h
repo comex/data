@@ -20,7 +20,7 @@ const static char *_arg = NULL;
     fprintf(stderr, "%s: ", __func__); \
     if(_arg) fprintf(stderr, "%s: ", _arg); \
     fprintf(stderr, fmt "\n", ##args); \
-    abort(); \
+    exit(1); \
 } while(0)
 #define edie(fmt, args...) die(fmt ": %s", ##args, strerror(errno))
 

@@ -60,7 +60,7 @@ void b_macho_store(struct binary *binary, const char *path);
 
 addr_t b_sym(const struct binary *binary, const char *name, bool to_execute);
 
-#define CMD_ITERATE(hdr, cmd) for(struct load_command *cmd = (void *)((hdr) + 1), *end = (void *)((char *)(hdr) + (hdr)->sizeofcmds); cmd; cmd = cmd->cmdsize < ((char *)end - (char *)cmd) ? (void *)((char *)cmd + cmd->cmdsize) : NULL)
+#define CMD_ITERATE(hdr, cmd) for(struct load_command *cmd = (void *)((hdr) + 1), *end = (void *)((char *)(hdr) + (hdr)->sizeofcmds); cmd; cmd = (cmd->cmdsize > 0 && cmd->cmdsize < ((char *)end - (char *)cmd)) ? (void *)((char *)cmd + cmd->cmdsize) : NULL)
 
 #define r(sz) \
 static inline uint##sz##_t read##sz(const struct binary *binary, addr_t addr) { \
