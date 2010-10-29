@@ -195,7 +195,9 @@ int main(int argc, char **argv) {
     if(*p && !strcmp(*p, "-8")) {
         addr_t addr = find_data(b_macho_segrange(&binary, "__TEXT"), "- 08 00 10 00", 1, true);
         printf("%08x\n", addr);
+        p++;
     }
+    if(*p) goto usage;
     return 0;
     usage:
     fprintf(stderr, "Usage: data (-c cache | -C) | (-k kernel | -K"
