@@ -20,6 +20,10 @@ struct comp_header {
 } __attribute__((packed));
 
 prange_t decrypt_and_decompress(uint32_t key_bits, prange_t key, prange_t iv, prange_t buffer) {
+#ifdef PROFILING
+    clock_t tv1 = clock();
+#endif
+
     size_t size;
     switch(key_bits) {
         case 128: size = kCCKeySizeAES128; break;
@@ -47,6 +51,10 @@ prange_t decrypt_and_decompress(uint32_t key_bits, prange_t key, prange_t iv, pr
                                      outbuf,
                                      outbuf_len,
                                      &outbuf_len);
+    
+#ifdef PROFILING
+    clock_t tv2 = clock();
+#endif
     if(result != kCCSuccess) {
         die("decryption failed: %d", (unsigned int) result);
     }
@@ -82,6 +90,10 @@ prange_t decrypt_and_decompress(uint32_t key_bits, prange_t key, prange_t iv, pr
 #endif
 
     free(outbuf);
+#ifdef PROFILING
+    clock_t tv3 = clock();
+    printf("decrypt:%u decompress:%u\n", (unsigned int) (tv2 - tv1), (unsigned int) (tv3 - tv2));
+#endif
     return (prange_t) {decbuf, actual_length_uncompressed};
 }
 

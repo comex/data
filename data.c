@@ -182,6 +182,7 @@ int main(int argc, char **argv) {
         prange_t iv = parse_hex_string(argv[4]);
         prange_t data = parse_img3_file(argv[2], &key_bits);
         prange_t kern = decrypt_and_decompress(key_bits, key, iv, data);
+        return 0;
         b_prange_load_macho(&binary, kern, false);
         write_range(foo(&binary), "pf2", 0755);
         p = &argv[5];
