@@ -14,6 +14,7 @@
 #include <sys/file.h>
 #include "common.h"
 #include "binary.h"
+#include "find.h"
 
 // copied from xnu
 
@@ -56,7 +57,27 @@ kern_return_t kr_assert_(kern_return_t kr, const char *name, int line) {
 #define kr_assert(x) kr_assert_((x), #x, __LINE__)
 
 uint32_t lookup_sym(char *sym) {
-    if(!strcmp(sym, "_sysent")) return sysent;
+    if(!strcmp(sym, "_sysent")) {
+        return sysent;
+    }
+    if(sym[0] == '$' && sym[1] == '_') {
+        // lol...
+        char *to_find = malloc(strlen(sym)+1);
+        char *p = to_find;
+        while(1) {
+            char c = *sym++;
+            switch(c) {
+            case '$': c = '-'; break;
+            case '_': c = ' '; break;
+            case 'X': c = '.'; break;
+            }
+            *p++ = c;
+            if(!c) break;
+        }
+        uint32_t result = find_data(b_macho_segrange(kern, "__TEXT"), to_find, 0, true);
+        free(to_find);
+        return result;
+    }
     return b_sym(kern, sym, true);
 }
 
