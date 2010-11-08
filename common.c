@@ -52,3 +52,14 @@ prange_t parse_hex_string(char *string) {
     bad:
     die("bad hex string %s", string);
 }
+
+uint32_t parse_hex_uint32(char *string) {
+    prange_t pr = parse_hex_string(string);
+    if(pr.size > sizeof(uint32_t)) { 
+        die("too long hex string %s", string);
+    }
+    uint32_t u;
+    memcpy(&u, pr.start, pr.size);
+    free(pr.start);
+    return u;
+}

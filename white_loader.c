@@ -15,6 +15,7 @@
 #include "common.h"
 #include "binary.h"
 #include "find.h"
+#include "cc.h"
 
 // copied from xnu
 
@@ -81,11 +82,7 @@ uint32_t lookup_sym(char *sym) {
     return b_sym(kern, sym, true);
 }
 
-void do_kern(const char *filename) {
-    kern = malloc(sizeof(*kern));
-    b_init(kern);
-    b_load_macho(kern, filename, false);
-
+void do_kern() {
     CMD_ITERATE(kern->mach_hdr, cmd) {
         if(cmd->cmd == LC_SEGMENT) {
             if(sysent) continue; 
@@ -405,6 +402,9 @@ void unload_kcode(uint32_t addr) {
                                 0xfff,
                                 (vm_offset_t) hdr,
                                 &whatever));
+    if(hdr->magic != MH_MAGIC) {
+        die("invalid header (wrong address?)");
+    }
     CMD_ITERATE(hdr, cmd) {
         if(cmd->cmd == LC_SEGMENT) {
             struct segment_command *seg = (void *) cmd;
@@ -449,9 +449,10 @@ void unload_kcode(uint32_t addr) {
     free(hdr);
 }
 
-#define parse_hex(arg) ({char *_end; uint32_t _r = (uint32_t) strtoll((arg), &_end, 16); if(*_end) { fprintf(stderr, "error: bad hex string %s\n", (arg)); goto usage; } _r;})
 int main(int argc, char **argv) {
     bool did_kern = false;
+    kern = malloc(sizeof(*kern));
+    b_init(kern);
     argv++;
     while(1) {
         char *arg = *argv++;
@@ -461,8 +462,18 @@ int main(int argc, char **argv) {
         case 'k': {
             char *kern_fn;
             if(!(kern_fn = *argv++)) goto usage;
-            do_kern(kern_fn);
+            b_load_macho(kern, kern_fn, false);
+            do_kern();
             did_kern = true;
+            break;
+        }
+        case 'i': {
+            uint32_t key_bits;
+            prange_t data = parse_img3_file(*argv++, &key_bits);
+            prange_t key = parse_hex_string(*argv++);
+            prange_t iv = parse_hex_string(*argv++);
+            prange_t decompressed = decrypt_and_decompress(key_bits, key, iv, data);
+            b_prange_load_macho(kern, decompressed, false);
             break;
         }
         case 'l': {
@@ -485,13 +496,13 @@ int main(int argc, char **argv) {
             if(!(to_load_fn = *argv++)) goto usage;
             if(!(baseaddr_hex = *argv++)) goto usage;
             if(!(output_fn = *argv++)) goto usage;
-            do_kcode(to_load_fn, parse_hex(baseaddr_hex), output_fn);
+            do_kcode(to_load_fn, parse_hex_uint32(baseaddr_hex), output_fn);
             return 0;
         }
         case 'u': {
             char *baseaddr_hex;
             if(!(baseaddr_hex = *argv++)) goto usage;
-            unload_kcode(parse_hex(baseaddr_hex));
+            unload_kcode(parse_hex_uint32(baseaddr_hex));
             return 0;
         }
         }
