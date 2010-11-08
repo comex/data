@@ -57,7 +57,6 @@ uint32_t lzadler32(uint8_t *buf, int32_t len)
 #define F         18    /* upper limit for match_length */
 #define THRESHOLD 2     /* encode string into position and length
                            if match_length is greater than this */
-
 int
 decompress_lzss(uint8_t *dst, uint8_t *src, uint32_t srclen)
 {
@@ -70,8 +69,7 @@ decompress_lzss(uint8_t *dst, uint8_t *src, uint32_t srclen)
     
     dst = dststart;
     srcend = src + srclen;
-    for (i = 0; i < N - F; i++)
-        text_buf[i] = ' ';
+    memset(text_buf, ' ', N - F);
     r = N - F;
     flags = 0;
     for ( ; ; ) {

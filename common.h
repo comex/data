@@ -40,4 +40,5 @@ static inline bool is_valid_range(prange_t range) {
 }
 
 prange_t parse_hex_string(char *string);
+
 uint32_t parse_hex_uint32(char *string);
