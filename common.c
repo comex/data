@@ -51,6 +51,7 @@ prange_t parse_hex_string(const char *string) {
     die("bad hex string %s", string);
 }
 
+<<<<<<< HEAD
 prange_t load_file(const char *filename, bool rw, mode_t *mode) {
 #define _arg filename
     if(mode) {
@@ -89,3 +90,13 @@ void write_file(prange_t range, const char *filename, mode_t mode) {
 #undef _arg
 }
 
+uint32_t parse_hex_uint32(char *string) {
+    prange_t pr = parse_hex_string(string);
+    if(pr.size > sizeof(uint32_t)) { 
+        die("too long hex string %s", string);
+    }
+    uint32_t u;
+    memcpy(&u, pr.start, pr.size);
+    free(pr.start);
+    return u;
+}
