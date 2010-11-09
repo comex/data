@@ -82,6 +82,7 @@ static void do_dyld_hdr(struct binary *binary) {
 
 void b_load_dyldcache(struct binary *binary, const char *path) {
 #define _arg path
+    binary->valid = true;
     int fd = open(path, O_RDONLY);
     if(fd == -1) { 
         edie("could not open");
@@ -92,14 +93,14 @@ void b_load_dyldcache(struct binary *binary, const char *path) {
     }
     do_dyld_hdr(binary);
 
-    size_t sz = binary->dyld_mapping_count * sizeof(struct shared_file_mapping_np);
+    ssize_t sz = binary->dyld_mapping_count * sizeof(struct shared_file_mapping_np);
     binary->dyld_mappings = malloc(sz);
     if(pread(fd, binary->dyld_mappings, sz, binary->dyld_hdr->mappingOffset) != sz) {
         edie("could not read mappings");
     }
 
     uint32_t minaddr = (uint32_t) -1, maxaddr = 0;
-    for(int i = 0; i < binary->dyld_mapping_count; i++) {
+    for(unsigned int i = 0; i < binary->dyld_mapping_count; i++) {
         struct shared_file_mapping_np *mapping = &binary->dyld_mappings[i];
         addr_t address = (addr_t) mapping->sfm_address;
         size_t size = (size_t) mapping->sfm_size;
@@ -109,7 +110,7 @@ void b_load_dyldcache(struct binary *binary, const char *path) {
     b_reserve_memory(binary, minaddr, maxaddr);
 
 
-    for(int i = 0; i < binary->dyld_mapping_count; i++) {
+    for(unsigned int i = 0; i < binary->dyld_mapping_count; i++) {
         struct shared_file_mapping_np *mapping = &binary->dyld_mappings[i];
         if(mmap(b_addrconv_unsafe(binary, (addr_t) mapping->sfm_address), (size_t) mapping->sfm_size, PROT_READ, MAP_SHARED | MAP_FIXED, fd, (off_t) mapping->sfm_file_offset) == MAP_FAILED) {
             edie("could not map segment %d of this crappy binary format", i);
@@ -119,13 +120,14 @@ void b_load_dyldcache(struct binary *binary, const char *path) {
 }
 
 void b_load_running_dyldcache(struct binary *binary, void *baseaddr) {
+    binary->valid = true;
     binary->dyld_hdr = baseaddr;
     binary->load_base = NULL;
     do_dyld_hdr(binary);
     binary->dyld_mappings = (void *) ((char *)binary->dyld_hdr + binary->dyld_hdr->mappingOffset);
 }
 
-range_t b_dyldcache_nth_segment(const struct binary *binary, int n) {
+range_t b_dyldcache_nth_segment(const struct binary *binary, unsigned int n) {
     if(n < binary->dyld_mapping_count) {
         ((struct binary *) binary)->last_sfm = &binary->dyld_mappings[n];
         return (range_t) {binary, (addr_t) binary->dyld_mappings[n].sfm_address, (size_t) binary->dyld_mappings[n].sfm_size};
@@ -138,7 +140,7 @@ void b_dyldcache_load_macho(struct binary *binary, const char *filename) {
     if(binary->dyld_hdr->imagesCount > 1000) {
         die("insane images count");
     }
-    for(int i = 0; i < binary->dyld_hdr->imagesCount; i++) {
+    for(unsigned int i = 0; i < binary->dyld_hdr->imagesCount; i++) {
         struct dyld_cache_image_info *info = rangeconv_off((range_t) {binary, binary->dyld_hdr->imagesOffset + i * sizeof(*info), sizeof(*info)}).start;
         char *name = rangeconv_off((range_t) {binary, info->pathFileOffset, 128}).start;
         if(strncmp(name, filename, 128)) {
@@ -236,7 +238,7 @@ static void b_load_macho_m(struct binary *binary, const char *path, uintptr_t fd
                 fat_offset = arch->offset;
                 mach_hdr = (*mm)(NULL, 0x1000, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, fat_offset);
                 if(mach_hdr == MAP_FAILED) {
-                    edie("could not map mach-o header from fat file", path);
+                    edie("could not map mach-o header from fat file");
                 }
                 break;
             }
@@ -297,6 +299,7 @@ static void *almost_mmap(void *addr, size_t len, int prot, int flags, uintptr_t 
 }
 
 void b_load_macho(struct binary *binary, const char *path, bool rw) {
+    binary->valid = true;
     int fd = open(path, O_RDONLY);
     if(fd == -1) { 
         edie("could not open");
@@ -307,6 +310,7 @@ void b_load_macho(struct binary *binary, const char *path, bool rw) {
 #ifdef IMG3_SUPPORT
 #include <mach/mach.h>
 static void *fake_mmap(void *addr, size_t len, int prot, int flags, uintptr_t fd, off_t offset) {
+    (void) prot; // hurf durf
     vm_address_t address = (vm_address_t) addr;
     vm_prot_t c, m;
     prange_t *pr = (void *) fd;
@@ -342,6 +346,7 @@ static int fake_munmap(void *addr, size_t len) {
 }
 
 void b_prange_load_macho(struct binary *binary, prange_t range, bool rw) {
+    binary->valid = true;
     b_load_macho_m(binary, "(buffer)", (uintptr_t) &range, rw, &fake_mmap, &fake_munmap);
 }
 #endif
@@ -540,7 +545,8 @@ void b_macho_store(struct binary *binary, const char *path) {
         if(cmd->cmd == LC_SEGMENT) {
             struct segment_command *scmd = (void *) cmd;
             lseek(fd, scmd->fileoff, SEEK_SET);
-            if(write(fd, b_addrconv_unsafe(binary, scmd->vmaddr), scmd->filesize) != scmd->filesize) {
+            ssize_t result = write(fd, b_addrconv_unsafe(binary, scmd->vmaddr), scmd->filesize);
+            if(result < 0 || result != (ssize_t)scmd->filesize) {
                 edie("couldn't write segment data");
             }
         }

@@ -78,7 +78,7 @@ prange_t decrypt_and_decompress(uint32_t key_bits, prange_t key, prange_t iv, pr
     assert(!mprotect((char *)decbuf + decbuf_len - 0x1000, PROT_NONE, 0x1000));
 
     int actual_length_uncompressed = decompress_lzss(decbuf, (void *) (ch + 1), length_compressed);
-    if(actual_length_uncompressed != length_uncompressed) {
+    if(actual_length_uncompressed < 0 || (unsigned int) actual_length_uncompressed != length_uncompressed) {
         die("invalid complzss thing");
     }
 
@@ -128,6 +128,7 @@ prange_t parse_img3(prange_t img3, uint32_t *key_bits) {
     struct img3_tag *tag = (void *) (hdr + 1);
     struct img3_tag *tag2;
     prange_t result;
+    memset(&result, 0, sizeof(result)); // not actually necessary, >:( gcc
     bool have_data = false, have_kbag = false;
     while(!(have_data && have_kbag)) {
         if((void *)tag->data >= end) {
@@ -155,19 +156,5 @@ prange_t parse_img3(prange_t img3, uint32_t *key_bits) {
 }
 
 prange_t parse_img3_file(char *filename, uint32_t *key_bits) {
-#define _arg filename
-    int fd = open(filename, O_RDONLY);
-    if(fd == -1) {
-        edie("could not open");
-    }
-    off_t end = lseek(fd, 0, SEEK_END);
-    if(end > SIZE_MAX) {
-        die("too big");
-    }
-    void *img3 = mmap(NULL, (size_t) end, PROT_READ, MAP_SHARED, fd, 0);
-    if(img3 == MAP_FAILED) {
-        edie("could not mmap img3");
-    }
-    return parse_img3((prange_t) {img3, (size_t) end}, key_bits);
-#undef _arg
+    return parse_img3(load_file(filename, false, NULL), key_bits);
 }

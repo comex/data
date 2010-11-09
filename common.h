@@ -15,7 +15,7 @@
 #include <time.h>
 #endif
 
-const static char *_arg = NULL;
+static const char *_arg = NULL;
 #define die(fmt, args...) do { \
     fprintf(stderr, "%s: ", __func__); \
     if(_arg) fprintf(stderr, "%s: ", _arg); \
@@ -32,12 +32,16 @@ typedef struct { void *start; size_t size; } prange_t;
 void check_range_has_addr(range_t range, addr_t addr);
 
 prange_t pdup(prange_t range);
-void write_range(prange_t range, const char *fn, mode_t mode);
+void pfree(prange_t range);
+void punmap(prange_t range);
 
 static inline bool is_valid_range(prange_t range) {
     char c;
     return !mincore(range.start, range.size, &c);
 }
 
-prange_t parse_hex_string(char *string);
+prange_t parse_hex_string(const char *string);
+
+prange_t load_file(const char *filename, bool rw, mode_t *mode);
+void write_file(prange_t range, const char *filename, mode_t mode);
 

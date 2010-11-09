@@ -1,4 +1,5 @@
 #include "common.h"
+#include <sys/stat.h>
 
 prange_t pdup(prange_t range) {
     void *buf = malloc(range.size);
@@ -6,15 +7,12 @@ prange_t pdup(prange_t range) {
     return (prange_t) {buf, range.size};
 }
 
-void write_range(prange_t range, const char *fn, mode_t mode) {
-    int fd = open(fn, O_WRONLY | O_CREAT | O_TRUNC, 0755);
-    if(fd == -1) {
-        edie("write_range: could not open %s", fn);
-    }
-    if(write(fd, range.start, range.size) != range.size) {
-        edie("write_range: could not write data to %s", fn);
-    }
-    close(fd);
+void pfree(prange_t range) {
+    free(range.start);
+}
+
+void punmap(prange_t range) {
+    munmap(range.start, range.size);
 }
 
 void check_range_has_addr(range_t range, addr_t addr) {
@@ -34,7 +32,7 @@ static inline bool parse_hex_digit(char digit, uint8_t *result) {
     return false;
 }
 
-prange_t parse_hex_string(char *string) {
+prange_t parse_hex_string(const char *string) {
     size_t len = strlen(string);
     if(len % 2) goto bad;
     len /= 2;
@@ -52,3 +50,42 @@ prange_t parse_hex_string(char *string) {
     bad:
     die("bad hex string %s", string);
 }
+
+prange_t load_file(const char *filename, bool rw, mode_t *mode) {
+#define _arg filename
+    if(mode) {
+        struct stat st;
+        if(lstat(filename, &st)) {
+            edie("could not lstat");
+        }
+        *mode = st.st_mode;
+    }
+    int fd = open(filename, O_RDONLY);
+    if(fd == -1) {
+        edie("could not open");
+    }
+    off_t end = lseek(fd, 0, SEEK_END);
+    if(sizeof(off_t) > sizeof(size_t) && end > (off_t) SIZE_MAX) {
+        die("too big: %lld", (long long) end);
+    }
+    void *buf = mmap(NULL, (size_t) end, PROT_READ | (rw ? PROT_WRITE : 0), MAP_PRIVATE, fd, 0);
+    if(buf == MAP_FAILED) {
+        edie("could not mmap buf");
+    }
+    return (prange_t) {buf, (size_t) end};
+#undef _arg
+}
+
+void write_file(prange_t range, const char *filename, mode_t mode) {
+#define _arg filename
+    int fd = open(filename, O_WRONLY | O_CREAT | O_TRUNC, mode);
+    if(fd == -1) {
+        edie("could not open");
+    }
+    if(write(fd, range.start, range.size) != (ssize_t) range.size) {
+        edie("could not write data");
+    }
+    close(fd);
+#undef _arg
+}
+

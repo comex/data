@@ -5,6 +5,8 @@ struct shared_file_mapping_np;
 struct mach_header;
 struct dysymtab_command;
 struct binary {
+    bool valid;
+
     int actual_cpusubtype;
     void *load_base;
 
@@ -45,7 +47,7 @@ void b_init(struct binary *binary);
 
 void b_load_dyldcache(struct binary *binary, const char *path);
 void b_load_running_dyldcache(struct binary *binary, void *baseaddr);
-range_t b_dyldcache_nth_segment(const struct binary *binary, int n);
+range_t b_dyldcache_nth_segment(const struct binary *binary, unsigned int n);
 void b_dyldcache_load_macho(struct binary *binary, const char *filename);
 
 void b_running_kernel_load_macho(struct binary *binary);
@@ -60,7 +62,7 @@ void b_macho_store(struct binary *binary, const char *path);
 
 addr_t b_sym(const struct binary *binary, const char *name, bool to_execute);
 
-#define CMD_ITERATE(hdr, cmd) for(struct load_command *cmd = (void *)((hdr) + 1), *end = (void *)((char *)(hdr) + (hdr)->sizeofcmds); cmd; cmd = (cmd->cmdsize > 0 && cmd->cmdsize < ((char *)end - (char *)cmd)) ? (void *)((char *)cmd + cmd->cmdsize) : NULL)
+#define CMD_ITERATE(hdr, cmd) for(struct load_command *cmd = (void *)((hdr) + 1), *end = (void *)((char *)(hdr) + (hdr)->sizeofcmds); cmd; cmd = (cmd->cmdsize > 0 && cmd->cmdsize < (uint32_t)((char *)end - (char *)cmd)) ? (void *)((char *)cmd + cmd->cmdsize) : NULL)
 
 #define r(sz) \
 static inline uint##sz##_t read##sz(const struct binary *binary, addr_t addr) { \

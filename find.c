@@ -64,8 +64,8 @@ addr_t find_data(range_t range, char *to_find, int align, bool must_find) {
     clock_t a = clock();
 #endif
     int16_t buf[128];
-    size_t pattern_size = 0;
-    size_t offset = -1;
+    ssize_t pattern_size = 0;
+    ssize_t offset = -1;
     char *to_find_ = strdup(to_find);
     while(to_find_) {
         char *bit = strsep(&to_find_, " ");
@@ -104,7 +104,7 @@ addr_t find_string(range_t range, const char *string, int align, bool must_find)
     size_t len = strlen(string);
     int16_t *buf = malloc(sizeof(int16_t) * (len + 2));
     buf[0] = buf[len + 1] = 0;
-    for(int i = 0; i < len; i++) {
+    for(unsigned int i = 0; i < len; i++) {
         buf[i+1] = (uint8_t) string[i];
     }
     addr_t result = find_data_int(range, buf, len, 1, align, must_find, string);
@@ -134,7 +134,7 @@ uintptr_t preplace32_a(prange_t range, uint32_t a) {
             return addr;
         }
     }
-    fprintf(stderr, "preplace32: warning: didn't find %08x anywhere\n", a);
+    //fprintf(stderr, "preplace32: warning: didn't find %08x anywhere\n", a);
     return 0;
 }
 
