@@ -15,12 +15,12 @@
 #include <time.h>
 #endif
 
-static const char *_arg = NULL;
+static const char *_arg = MAP_FAILED;
 #define die(fmt, args...) do { \
     fprintf(stderr, "%s: ", __func__); \
-    if(_arg) fprintf(stderr, "%s: ", _arg); \
+    if(_arg != MAP_FAILED) fprintf(stderr, "%s: ", _arg); \
     fprintf(stderr, fmt "\n", ##args); \
-    exit(1); \
+    abort(); /*exit(1);*/ \
 } while(0)
 #define edie(fmt, args...) die(fmt ": %s", ##args, strerror(errno))
 
@@ -43,6 +43,6 @@ static inline bool is_valid_range(prange_t range) {
 prange_t parse_hex_string(const char *string);
 
 prange_t load_file(const char *filename, bool rw, mode_t *mode);
-void write_file(prange_t range, const char *filename, mode_t mode);
+void store_file(prange_t range, const char *filename, mode_t mode);
 
 uint32_t parse_hex_uint32(char *string);

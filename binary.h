@@ -35,8 +35,12 @@ struct binary {
 __attribute__((const))
 prange_t rangeconv_checkof(range_t range);
 
+// address -> buffer
 __attribute__((const)) prange_t rangeconv(range_t range);
+// offset -> buffer
 __attribute__((const)) prange_t rangeconv_off(range_t range);
+// address -> offset
+__attribute__((const)) off_t range_to_off(range_t range);
 
 __attribute__((const, always_inline))
 static inline void *b_addrconv_unsafe(const struct binary *binary, addr_t addr) {
@@ -74,3 +78,4 @@ r(16)
 r(32)
 r(64)
 
+__attribute__((const)) bool b_is_armv7(struct binary *binary);

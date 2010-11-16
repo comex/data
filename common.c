@@ -51,7 +51,6 @@ prange_t parse_hex_string(const char *string) {
     die("bad hex string %s", string);
 }
 
-<<<<<<< HEAD
 prange_t load_file(const char *filename, bool rw, mode_t *mode) {
 #define _arg filename
     if(mode) {
@@ -77,7 +76,7 @@ prange_t load_file(const char *filename, bool rw, mode_t *mode) {
 #undef _arg
 }
 
-void write_file(prange_t range, const char *filename, mode_t mode) {
+void store_file(prange_t range, const char *filename, mode_t mode) {
 #define _arg filename
     int fd = open(filename, O_WRONLY | O_CREAT | O_TRUNC, mode);
     if(fd == -1) {

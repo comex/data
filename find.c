@@ -39,7 +39,7 @@ static addr_t find_data_int(range_t range, int16_t *buf, ssize_t pattern_size, s
             goto keep_going;
         }
         if(foundit) {
-            die("Found [%s] multiple times in range: first at %08x then at %08x", name, foundit, new);
+            die("found [%s] multiple times in range: first at %08x then at %08x", name, foundit, new);
         }
         foundit = new;
         if(align) {
@@ -53,7 +53,7 @@ static addr_t find_data_int(range_t range, int16_t *buf, ssize_t pattern_size, s
     if(foundit) {
         return foundit + offset;
     } else if(must_find) {
-        die("Didn't find [%s] in range (%x, %zx)", name, range.start, range.size);
+        die("didn't find [%s] in range (%x, %zx)", name, range.start, range.size);
     } else {
         return 0;
     }
@@ -122,7 +122,7 @@ addr_t find_int32(range_t range, uint32_t number, bool must_find) {
         }
     }
     if(must_find) {
-        die("Didn't find %08x in range", number);
+        die("didn't find %08x in range", number);
     } else {
         return 0;
     }
@@ -206,6 +206,6 @@ addr_t b_dyldcache_find_anywhere(struct binary *binary, char *to_find, int align
         addr_t result = find_data(range, to_find, align, false);
         if(result) return result;
     }
-    die("Didn't find [%s] /anywhere/", to_find);
+    die("didn't find [%s] /anywhere/", to_find);
 }
 

@@ -153,8 +153,8 @@ void b_dyldcache_load_macho(struct binary *binary, const char *filename) {
     b_macho_load_symbols(binary);
 }
 
-#define DEFINE_RANGECONV(name, dfield, mfield, intro, dreturn, mreturn) \
-prange_t name(range_t range) { \
+#define DEFINE_RANGECONV(rettype, name, intro, dfield, dreturn, mfield, mreturn) \
+rettype name(range_t range) { \
     if(range.binary->dyld_hdr) { \
         struct shared_file_mapping_np *sfm = range.binary->last_sfm; \
         if(sfm && sfm->dfield <= range.start && range.start <= range.start + range.size && range.start + range.size <= sfm->dfield + sfm->sfm_size) { \
@@ -171,7 +171,7 @@ prange_t name(range_t range) { \
         } \
         goto err; \
         dok: \
-        return (prange_t) {dreturn, range.size}; \
+        return dreturn; \
     } else if(range.binary->mach_hdr) { \
         struct segment_command *seg = range.binary->last_seg; \
         if(seg && seg->mfield <= range.start && range.start <= range.start + range.size && range.start + range.size <= seg->mfield + seg->filesize) { \
@@ -188,7 +188,7 @@ prange_t name(range_t range) { \
         } \
         goto err; \
         mok: \
-        return (prange_t) {mreturn, range.size}; \
+        return mreturn; \
     } else { \
         die("neither dyld_hdr nor mach_hdr present"); \
     } \
@@ -196,12 +196,17 @@ prange_t name(range_t range) { \
     die(intro " (%08x, %zx) not valid", range.start, range.size); \
 }
 
-DEFINE_RANGECONV(rangeconv, sfm_address, vmaddr, "range", \
-    b_addrconv_unsafe(range.binary, range.start), \
-    b_addrconv_unsafe(range.binary, range.start))
-DEFINE_RANGECONV(rangeconv_off, sfm_file_offset, fileoff, "offset range", \
-    (char *)b_addrconv_unsafe(range.binary, sfm->sfm_address) + range.start - sfm->sfm_file_offset, \
-    (char *)b_addrconv_unsafe(range.binary, seg->vmaddr) + range.start - seg->fileoff)
+DEFINE_RANGECONV(prange_t, rangeconv, "range", \
+    sfm_address, ((prange_t) {b_addrconv_unsafe(range.binary, range.start), range.size}), \
+    vmaddr, ((prange_t) {b_addrconv_unsafe(range.binary, range.start), range.size}))
+
+DEFINE_RANGECONV(prange_t, rangeconv_off, "offset range", \
+    sfm_file_offset, ((prange_t) {(char *)b_addrconv_unsafe(range.binary, sfm->sfm_address) + range.start - sfm->sfm_file_offset, range.size}), \
+    fileoff, ((prange_t) {(char *)b_addrconv_unsafe(range.binary, seg->vmaddr) + range.start - seg->fileoff, range.size}))
+
+DEFINE_RANGECONV(off_t, range_to_off, "range", \
+    sfm_address, (off_t) (sfm->sfm_file_offset + range.start - sfm->sfm_address),
+    vmaddr, (off_t) (seg->fileoff + range.start - seg->vmaddr))
 
 typedef void *(*almost_mmap_func)(void *, size_t, int, int, uintptr_t, off_t);
 typedef int (*munmap_func)(void *, size_t);
@@ -299,12 +304,14 @@ static void *almost_mmap(void *addr, size_t len, int prot, int flags, uintptr_t 
 }
 
 void b_load_macho(struct binary *binary, const char *path, bool rw) {
+#define _arg path
     binary->valid = true;
     int fd = open(path, O_RDONLY);
     if(fd == -1) { 
         edie("could not open");
     }
     b_load_macho_m(binary, path, fd, rw, &almost_mmap, &munmap);
+#undef _arg
 }
 
 #ifdef IMG3_SUPPORT
@@ -464,6 +471,10 @@ void b_running_kernel_load_macho(struct binary *binary) {
  
 
 range_t b_macho_segrange(const struct binary *binary, const char *segname) {
+    if(binary->last_seg && !strncmp(binary->last_seg->segname, segname, 16)) {
+        return (range_t) {binary, binary->last_seg->vmaddr, binary->last_seg->filesize};
+    }
+
     CMD_ITERATE(binary->mach_hdr, cmd) {
         if(cmd->cmd == LC_SEGMENT) {
             struct segment_command *seg = (void *) cmd;
@@ -553,3 +564,19 @@ void b_macho_store(struct binary *binary, const char *path) {
     }
 #undef _arg
 }
+
+bool b_is_armv7(struct binary *binary) {
+    bool result;
+    switch(binary->actual_cpusubtype) {
+    case 6:
+        result = false;
+        break;
+    case 9:
+        result = true;
+        break;
+    default:
+        die("unknown cpusubtype %d", binary->actual_cpusubtype);
+    }
+    return result;
+}
+
