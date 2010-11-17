@@ -2,7 +2,7 @@
 #include "find.h"
 #include "binary.h"
 #include "cc.h"
-#include "../config/config_asm.h"
+#include "placeholder.h"
 
 #define patch_range(name, addr, pr...) \
     ({ prange_t pr_ = pr; \
@@ -29,7 +29,7 @@ addr_t find_scratch(struct binary *binary) {
     for(size_t o = 0; o < pr.size - 0x1000; o += 4) {
         for(size_t p = 0; p < 0x1000; p++) {
             uint8_t c = ((char *) pr.start)[o + p];
-            if(c != 0 && c != 0x14) goto nope;
+            if(!((p != 0 && c == 0) || c == 0x14)) goto nope;
         }
         return range.start + o;
         nope:;
@@ -40,19 +40,6 @@ addr_t find_scratch(struct binary *binary) {
 void do_kernel(prange_t output, prange_t sandbox, struct binary *binary) {
     bool is_armv7 = b_is_armv7(binary);
 
-    addr_t scratch = find_scratch(binary);
-
-    // sandbox
-    range_t range = b_macho_segrange(binary, "__PRELINK_TEXT");
-    addr_t sb_evaluate = find_bof(range, find_int32(range, find_string(range, "bad opcode", false, true), true), is_armv7);
-    patch(SB_EVALUATE,
-          sb_evaluate,
-          uint32_t, {(is_armv7 ? 0xf000f8df : 0xe51ff004), scratch | 1});
-
-    patch_range(SANDBOX,
-                scratch,
-                sandbox);
-    
     // patches
     /*patch(PATCH_KERNEL_PMAP_NX_ENABLED,
           read32(binary, b_sym(binary, "_kernel_pmap", false)) + 0x420,
@@ -84,6 +71,9 @@ void do_kernel(prange_t output, prange_t sandbox, struct binary *binary) {
           resolve_ldr(binary, find_data(b_macho_segrange(binary, "__TEXT"), is_armv7 ? "1d ee 90 3f d3 f8 4c 33 d3 f8 9c 20 + .. .. .. .. 19 68 00 29" : "9c 22 03 59 99 58 + .. .. 1a 68 00 2a", 0, true)),
           uint32_t, {1});
 
+    // sandbox
+    range_t range = b_macho_segrange(binary, "__PRELINK_TEXT");
+    addr_t sb_evaluate = find_bof(range, find_int32(range, find_string(range, "bad opcode", false, true), true), is_armv7);
     
     preplace32(sandbox, CONFIG_IS_ARMV7, (uint32_t) is_armv7);
     preplace32(sandbox, CONFIG_VN_GETPATH, b_sym(binary, "_vn_getpath", true));
@@ -92,6 +82,19 @@ void do_kernel(prange_t output, prange_t sandbox, struct binary *binary) {
     preplace32(sandbox, CONFIG_SB_EVALUATE_ORIG2, read32(binary, sb_evaluate + 4));
     preplace32(sandbox, CONFIG_SB_EVALUATE_JUMPTO, sb_evaluate + (is_armv7 ? 9 : 8));
     preplace32(sandbox, CONFIG_DVP_STRUCT_OFFSET, find_dvp_struct_offset(binary));
+    
+    addr_t scratch = find_scratch(binary);
+
+    patch(SB_EVALUATE,
+          sb_evaluate,
+          uint32_t, {(is_armv7 ? 0xf000f8df : 0xe51ff004), scratch | 1});
+
+    check_no_placeholders(sandbox);
+    patch_range(SANDBOX,
+                scratch,
+                sandbox);
+
+    printf("scratch = %x\n", scratch);
 }
 
 

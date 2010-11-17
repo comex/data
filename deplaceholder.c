@@ -2,18 +2,7 @@
 #include "find.h"
 #include "binary.h"
 #include "cc.h"
-#include "../config/config_asm.h"
-
-void check_no_placeholders(prange_t pr) {
-#ifndef __arm__
-    for(uintptr_t addr = (uintptr_t)pr.start; addr + sizeof(uint32_t) <= (uintptr_t)pr.start + pr.size; addr++) {
-        uint32_t val = *(uint32_t *)addr;
-        if(val > CONFIG_MIN && val < CONFIG_MAX) {
-            die("got %08x", val);
-        }
-    }
-#endif
-}
+#include "placeholder.h"
 
 // count the number of set bits
 static int count_ones(uint32_t number) {
