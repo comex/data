@@ -58,9 +58,9 @@ void do_kernel(prange_t output, prange_t sandbox, struct binary *binary) {
           find_data(b_macho_segrange(binary, "__TEXT"), is_armv7 ? "03 68 - c3 f8 20 24" : "84 23 db 00 - d5 50 22 68", 0, true),
           uint32_t, {is_armv7 ? 0xc420f8c3 : 0x682250d0});
 
-    patch(PATCH_PROC_ENFORCE,
+    /*patch(PATCH_PROC_ENFORCE,
           find_sysctl(binary, "proc_enforce"),
-          uint32_t, {0});
+          uint32_t, {0});*/
 
     patch(PATCH_LUNCHD,
           find_string(b_macho_segrange(binary, "__DATA"), "/sbin/launchd", 0, true),
