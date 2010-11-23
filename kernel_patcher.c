@@ -37,17 +37,39 @@ addr_t find_scratch(struct binary *binary) {
     die("didn't find scratch");
 }
 
+addr_t find_sysctl(struct binary *binary, const char *name) {
+    addr_t cs = find_string(b_macho_segrange(binary, "__TEXT"), name, 0, true);
+    addr_t csref = find_int32(b_macho_segrange(binary, "__DATA"), cs, true);
+    return read32(binary, csref - 8);
+}
+
 void do_kernel(prange_t output, prange_t sandbox, struct binary *binary) {
     bool is_armv7 = b_is_armv7(binary);
 
+//#define IN_PLACE_PATCH
     // patches
-    /*patch(PATCH_KERNEL_PMAP_NX_ENABLED,
+#ifdef IN_PLACE_PATCH
+    patch(PATCH_KERNEL_PMAP_NX_ENABLED,
           read32(binary, b_sym(binary, "_kernel_pmap", false)) + 0x420,
-          uint32_t, {0});*/
+          uint32_t, {0});
+#else
+    // the second ref to mem_size
+    patch(PATCH_KERNEL_PMAP_NX_ENABLED,
+          find_data(b_macho_segrange(binary, "__TEXT"), is_armv7 ? "03 68 - c3 f8 20 24" : "84 23 db 00 - d5 50 22 68", 0, true),
+          uint32_t, {is_armv7 ? 0x2420f8cc : 0x682250d0});
+
+    patch(PATCH_VNODE_ENFORCE,
+          find_sysctl(binary, "vnode_enforce"),
+          uint32_t, {0});
+
+    patch(PATCH_LUNCHD,
+          find_string(b_macho_segrange(binary, "__DATA"), "/sbin/launchd", 0, true),
+          char, "/sbin/lunchd");
+#endif
 
     // vm_map_enter (patch1) - allow RWX pages
     patch(PATCH1,
-          find_data(b_macho_segrange(binary, "__TEXT"), is_armv7 ? "- 02 0f .. .. 63 08 03 f0 01 05 e3 0a 13 f0 01 03" : "- .. .. .. .. 6b 08 1e 1c eb 0a 01 22 1c 1c 16 40 14 40", 0, true),
+          find_data(b_macho_segrange(binary, "__TEXT"), is_armv7 ? "- 02 0f .. .. 63 08 03 f0 01 05 e3 0a 13 f0 01 03" : "- .. .. .. .. .. 08 1e 1c .. 0a 01 22 .. 1c 16 40 .. 40", 0, true),
           uint32_t, {is_armv7 ? 0x46c00f02 : 0x46c046c0});
 
     // AMFI (patch3) - disable the predefined list of executable stuff
@@ -94,7 +116,7 @@ void do_kernel(prange_t output, prange_t sandbox, struct binary *binary) {
                 scratch,
                 sandbox);
 
-    printf("scratch = %x\n", scratch);
+    fprintf(stderr, "scratch = %x\n", scratch);
 }
 
 
