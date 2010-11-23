@@ -1,5 +1,6 @@
 #include "common.h"
 #include <sys/stat.h>
+#include <arpa/inet.h>
 
 prange_t pdup(prange_t range) {
     void *buf = malloc(range.size);
@@ -91,11 +92,11 @@ void store_file(prange_t range, const char *filename, mode_t mode) {
 
 uint32_t parse_hex_uint32(char *string) {
     prange_t pr = parse_hex_string(string);
-    if(pr.size > sizeof(uint32_t)) { 
+    if(pr.size > 4) {
         die("too long hex string %s", string);
     }
     uint32_t u;
     memcpy(&u, pr.start, pr.size);
     free(pr.start);
-    return u;
+    return ntohl(u);
 }

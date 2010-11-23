@@ -17,4 +17,6 @@ void preplace32_b(prange_t range, uintptr_t start, uint32_t a, uint32_t b);
 addr_t find_bof(range_t range, addr_t eof, bool is_thumb);
 uint32_t resolve_ldr(struct binary *binary, addr_t addr);
 
+addr_t find_bl(range_t *range);
+
 addr_t b_dyldcache_find_anywhere(struct binary *binary, char *to_find, int align);

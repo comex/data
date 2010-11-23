@@ -61,6 +61,17 @@ uint32_t lookup_sym(char *sym) {
     if(!strcmp(sym, "_sysent")) {
         return sysent;
     }
+    if(sym[0] == '$' && sym[1] == 'b' && sym[2] == 'l' && sym[4] == '_') {
+        uint32_t func = b_sym(kern, sym + 5, true);
+        range_t range = (range_t) {kern, func, 0x1000};
+        int number = sym[3] - '0';
+        uint32_t bl;
+        while(number--) bl = find_bl(&func);
+        if(!bl) {
+            die("no bl for %s", sym);
+        }
+        return bl;
+    }
     if(sym[0] == '$' && sym[1] == '_') {
         // lol...
         char *to_find = malloc(strlen(sym)+1);

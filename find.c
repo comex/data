@@ -200,6 +200,63 @@ uint32_t resolve_ldr(struct binary *binary, addr_t addr) {
     return read32(binary, target);
 }
 
+addr_t find_bl(range_t *range) {
+    bool thumb = range->start & 1;
+    range->start &= ~1;
+    prange_t pr = rangeconv(*range);    
+    uint32_t diff;
+    void *base;
+    if(thumb) {
+        uint16_t *p = pr.start;
+        while((uintptr_t)(p + 2) <= (uintptr_t)pr.start + pr.size) {
+            base = p;
+            uint16_t val = *p++;
+            if((val & 0xf800) == 0xf000) {
+                uint32_t imm10 = val & 0x3ff;
+                uint32_t S = ((val & 0x400) >> 10);
+                uint16_t val2 = *p++;
+
+                uint32_t J1 = ((val2 & 0x2000) >> 13);
+                uint32_t J2 = ((val2 & 0x800) >> 11);
+                uint32_t I1 = ~(J1 ^ S) & 1, I2 = ~(J2 ^ S) & 1;
+                uint32_t imm11 = val2 & 0x7ff;
+                diff = (S << 24) | (I1 << 23) | (I2 << 22) | (imm10 << 12) | (imm11 << 1);
+
+                if((val2 & 0xd000) == 0xd000) {
+                    // BL
+                    diff |= 1;
+                    goto ok;
+                } else if((val2 & 0xd000) == 0xc000) {
+                    // BLX
+                    goto ok;
+                }
+            }
+        }
+    } else {
+        uint32_t *p = pr.start;
+        while((uintptr_t)(p + 1) <= (uintptr_t)pr.start + pr.size) {
+            base = p;
+            uint32_t val = *p++;
+            if((val & 0xfe000000) == 0xfa000000) {
+                // BL
+                diff = ((val & 0xffffff) << 2);
+                goto ok;
+            } else if((val & 0x0f000000) == 0x0b000000) {
+                // BLX
+                diff = ((val & 0x1000000) >> 23) | ((val & 0xffffff) << 2) | 1;
+                goto ok;
+            }
+        }
+    }
+    return 0;
+    ok:;
+    addr_t baseaddr = ((char *) base) - ((char *) pr.start) + range->start + 4;
+    printf("%08x\n", baseaddr);
+    range->start = baseaddr + thumb;
+    if(diff & 0x800000) diff |= 0xff000000;
+    return baseaddr + diff;
+}
+
 addr_t b_dyldcache_find_anywhere(struct binary *binary, char *to_find, int align) {
     range_t range;
     for(int i = 0; (range = b_dyldcache_nth_segment(binary, i)).start; i++) {
