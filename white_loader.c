@@ -66,7 +66,7 @@ uint32_t lookup_sym(char *sym) {
         range_t range = (range_t) {kern, func, 0x1000};
         int number = sym[3] - '0';
         uint32_t bl;
-        while(number--) bl = find_bl(&func);
+        while(number--) bl = find_bl(&range);
         if(!bl) {
             die("no bl for %s", sym);
         }
