@@ -30,6 +30,7 @@ int main(int argc, char **argv) {
             b_load_macho(&kern, kern_fn, true);
             break;
         }
+#ifdef IMG3_SUPPORT
         case 'i': {
             uint32_t key_bits;
             prange_t data = parse_img3_file(*argv++, &key_bits);
@@ -39,6 +40,7 @@ int main(int argc, char **argv) {
             b_prange_load_macho(&kern, decompressed, false);
             break;
         }
+#endif
 #ifdef __APPLE__
         case 'l': {
             if(!kern.valid) goto usage;

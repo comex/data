@@ -1,6 +1,4 @@
-#ifndef IMG3_SUPPORT
-#error cc.c and lzss.c are for IMG3_SUPPORT builds
-#endif
+#ifdef IMG3_SUPPORT
 #include <stdint.h>
 #include <stdlib.h>
 #include <assert.h>
@@ -160,3 +158,4 @@ prange_t parse_img3(prange_t img3, uint32_t *key_bits) {
 prange_t parse_img3_file(char *filename, uint32_t *key_bits) {
     return parse_img3(load_file(filename, false, NULL), key_bits);
 }
+#endif
