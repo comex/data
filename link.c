@@ -52,16 +52,16 @@ uint32_t b_lookup_sym(const struct binary *binary, char *sym) {
     return b_sym(binary, sym, true);
 }
 
-static void relocate_area(const struct binary *binary, uint32_t reloc_base, uint32_t slide, uint32_t reloff, uint32_t nreloc) {
+static void relocate_area(const struct binary *binary, const struct binary *kern, uint32_t slide, uint32_t reloff, uint32_t nreloc) {
     struct relocation_info *things = rangeconv_off((range_t) {binary, reloff, nreloc * sizeof(struct relocation_info)}).start;
     for(int i = 0; i < nreloc; i++) {
         assert(!things[i].r_pcrel);
         assert(things[i].r_length == 2);
         assert(things[i].r_type == 0);
-        uint32_t thing = reloc_base + things[i].r_address;
+        uint32_t thing = /*reloc_base + */things[i].r_address;
         uint32_t *p = rangeconv((range_t) {binary, thing, 4}).start;
         if(things[i].r_extern) {
-            uint32_t sym = b_lookup_sym(binary, binary->strtab + binary->symtab[things[i].r_symbolnum].n_un.n_strx);
+            uint32_t sym = b_lookup_sym(kern, binary->strtab + binary->symtab[things[i].r_symbolnum].n_un.n_strx);
             *p += sym;
         } else {
             // *shrug*
@@ -70,7 +70,7 @@ static void relocate_area(const struct binary *binary, uint32_t reloc_base, uint
     }
 }
 
-void b_relocate(struct binary *binary, uint32_t slide) {
+void b_relocate(struct binary *binary, const struct binary *kern, uint32_t slide) {
     CMD_ITERATE(binary->mach_hdr, cmd) {
         switch(cmd->cmd) {
         case LC_SYMTAB:
@@ -86,17 +86,8 @@ void b_relocate(struct binary *binary, uint32_t slide) {
     assert(binary->symtab);
     assert(binary->dysymtab);
     
-    addr_t reloc_base = 0;
-    CMD_ITERATE(binary->mach_hdr, cmd) {
-        if(cmd->cmd == LC_SEGMENT) {
-            struct segment_command *seg = (void *) cmd;
-            reloc_base = seg->vmaddr;
-        }
-    }
-    assert(reloc_base);
-
-    relocate_area(binary, reloc_base, slide, binary->dysymtab->locreloff, binary->dysymtab->nlocrel);
-    relocate_area(binary, reloc_base, slide, binary->dysymtab->extreloff, binary->dysymtab->nextrel);
+    relocate_area(binary, kern, slide, binary->dysymtab->locreloff, binary->dysymtab->nlocrel);
+    relocate_area(binary, kern, slide, binary->dysymtab->extreloff, binary->dysymtab->nextrel);
 
     CMD_ITERATE(binary->mach_hdr, cmd) {
         if(cmd->cmd == LC_SEGMENT) {
@@ -126,14 +117,14 @@ void b_relocate(struct binary *binary, uint32_t slide) {
                             if(sym >= binary->nsyms) {
                                 die("sym too high: %u", sym);
                             }
-                            things[i] = b_lookup_sym(binary, binary->strtab + binary->symtab[sym].n_un.n_strx);
+                            things[i] = b_lookup_sym(kern, binary->strtab + binary->symtab[sym].n_un.n_strx);
                         }
                     }
                     break;
                 }
                 case S_MOD_TERM_FUNC_POINTERS:
                     // be helpful for the unload later
-                    sect->reserved2 = b_find_sysent(binary);
+                    sect->reserved2 = b_find_sysent(kern);
                     break;
                 case S_ZEROFILL:
                 case S_MOD_INIT_FUNC_POINTERS:
@@ -152,7 +143,7 @@ void b_relocate(struct binary *binary, uint32_t slide) {
                 // until I get one, I won't bother finding out
                 assert(sect->nreloc == 0);
 
-                relocate_area(binary, slide, reloc_base, sect->reloff, sect->nreloc);
+                relocate_area(binary, kern, slide, sect->reloff, sect->nreloc);
                 sect->addr += slide;
             }
             seg->vmaddr += slide;

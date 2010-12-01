@@ -52,7 +52,7 @@ int main(int argc, char **argv) {
                 b_load_macho(&to_load, to_load_fn, true);
                 uint32_t slide = b_allocate_from_running_kernel(&to_load);
                 if(!(to_load.mach_hdr->flags & MH_PREBOUND)) {
-                    b_relocate(&to_load, slide);
+                    b_relocate(&to_load, &kern, slide);
                 }
                 b_inject_into_running_kernel(&to_load, b_find_sysent(&kern));
             }
@@ -70,7 +70,7 @@ int main(int argc, char **argv) {
                 b_init(&to_load);
                 b_load_macho(&to_load, to_load_fn, true);
                 if(!(to_load.mach_hdr->flags & MH_PREBOUND)) {
-                    b_relocate(&to_load, slide);
+                    b_relocate(&to_load, &kern, slide);
                     slide += 0x10000;
                 }
                 to_load.mach_hdr->flags |= MH_PREBOUND;
