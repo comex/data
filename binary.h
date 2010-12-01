@@ -9,6 +9,8 @@ struct binary {
 
     int actual_cpusubtype;
     void *load_base;
+    void *limit;
+    bool is_address_indexed;
 
     struct dyld_cache_header *dyld_hdr;
     uint32_t dyld_mapping_count;
@@ -32,34 +34,27 @@ struct binary {
 
 
 // check for start + size exceeding the range
-__attribute__((const))
-prange_t rangeconv_checkof(range_t range);
+//__attribute__((const))
+//prange_t rangeconv_checkof(range_t range);
 
 // address -> buffer
 __attribute__((const)) prange_t rangeconv(range_t range);
 // offset -> buffer
 __attribute__((const)) prange_t rangeconv_off(range_t range);
 // address -> offset
-__attribute__((const)) off_t range_to_off(range_t range);
-
-__attribute__((const, always_inline))
-static inline void *b_addrconv_unsafe(const struct binary *binary, addr_t addr) {
-    return (void *) ((char *)binary->load_base + addr);
-}
+__attribute__((const)) addr_t range_to_off(range_t range);
 
 void b_init(struct binary *binary);
 
-void b_load_dyldcache(struct binary *binary, const char *path);
+void b_load_dyldcache(struct binary *binary, const char *path, bool rw);
+void b_prange_load_dyldcache(struct binary *binary, prange_t range, const char *name);
 void b_load_running_dyldcache(struct binary *binary, void *baseaddr);
 range_t b_dyldcache_nth_segment(const struct binary *binary, unsigned int n);
 void b_dyldcache_load_macho(struct binary *binary, const char *filename);
 
-void b_running_kernel_load_macho(struct binary *binary);
 void b_macho_load_symbols(struct binary *binary);
 void b_load_macho(struct binary *binary, const char *path, bool rw);
-#ifdef IMG3_SUPPORT
-void b_prange_load_macho(struct binary *binary, prange_t range, bool rw);
-#endif
+void b_prange_load_macho(struct binary *binary, prange_t range, const char *name);
 
 __attribute__((pure)) range_t b_macho_segrange(const struct binary *binary, const char *segname);
 void b_macho_store(struct binary *binary, const char *path);
@@ -79,3 +74,20 @@ r(32)
 r(64)
 
 __attribute__((const)) bool b_is_armv7(struct binary *binary);
+
+__attribute__((const, always_inline))
+static inline prange_t x_prange(const struct binary *binary, addr_t addrbase, addr_t offbase, addr_t diff, size_t size) {
+    return (prange_t) {(char *)binary->load_base + (binary->is_address_indexed ? addrbase : offbase) + diff, size};
+}
+
+__attribute__((const, always_inline))
+static inline range_t x_range(const struct binary *binary, addr_t addrbase, addr_t offbase, addr_t diff, size_t size) {
+    return (range_t) {binary, addrbase + diff, size};
+}
+
+
+__attribute__((const, always_inline))
+static inline range_t x_off_range(const struct binary *binary, addr_t addrbase, addr_t offbase, addr_t diff, size_t size) {
+    return (range_t) {binary, offbase + diff, size};
+}
+

@@ -15,7 +15,7 @@
 #include <time.h>
 #endif
 
-static const char *_arg = MAP_FAILED;
+__attribute__((unused)) static const char *_arg = MAP_FAILED;
 #define die(fmt, args...) do { \
     fprintf(stderr, "%s: ", __func__); \
     if(_arg != MAP_FAILED) fprintf(stderr, "%s: ", _arg); \

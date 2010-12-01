@@ -87,6 +87,8 @@ prange_t decrypt_and_decompress(uint32_t key_bits, prange_t key, prange_t iv, pr
     if(actual_checksum != checksum) {
         die("bad checksum (%x, %x)", actual_checksum, checksum);
     }
+#else
+    (void) checksum;
 #endif
 
     free(outbuf);
