@@ -81,12 +81,14 @@ int main(int argc, char **argv) {
         case 'q': {
             return 0;
         }
+#ifdef __APPLE__
         case 'u': {
             char *baseaddr_hex;
             if(!(baseaddr_hex = *argv++)) goto usage;
             unload_from_running_kernel(parse_hex_uint32(baseaddr_hex));
             return 0;
         }
+#endif
         }
     }
 
@@ -94,10 +96,13 @@ int main(int argc, char **argv) {
     printf("Usage: loader -k kern "
 #ifdef __APPLE__
                                  "-l kcode.dylib                load\n"
+           "                      "
 #endif
-           "                      -p kcode.dylib out.dylib      prelink\n"
+                                 "-p kcode.dylib out.dylib      prelink\n"
            "                      -q kcode.dylib out_kern       insert into kc\n"
+#ifdef __APPLE__
            "              -u f0000000                           unload\n"
+#endif
            );
 }
 

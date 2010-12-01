@@ -1,6 +1,4 @@
-#ifndef IMG3_SUPPORT
-#error cc.c and lzss.c are for IMG3_SUPPORT builds
-#endif
+#ifdef IMG3_SUPPORT
 #include <stdint.h>
 #include <string.h>
 #include <stdlib.h>
@@ -98,4 +96,4 @@ decompress_lzss(uint8_t *dst, uint8_t *src, uint32_t srclen)
     
     return dst - dststart;
 }
-
+#endif

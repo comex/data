@@ -1,4 +1,3 @@
-#define BINARY_C
 #include "common.h"
 #include "binary.h"
 #include "loader.h"

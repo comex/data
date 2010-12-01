@@ -37,7 +37,7 @@ void punmap(prange_t range);
 
 static inline bool is_valid_range(prange_t range) {
     char c;
-    return !mincore(range.start, range.size, &c);
+    return !mincore(range.start, range.size, (void *) &c);
 }
 
 prange_t parse_hex_string(const char *string);
