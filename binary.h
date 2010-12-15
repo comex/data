@@ -61,6 +61,9 @@ void b_macho_store(struct binary *binary, const char *path);
 
 addr_t b_sym(const struct binary *binary, const char *name, bool to_execute);
 
+uint32_t b_allocate_from_macho_fd(int fd);
+void b_inject_into_macho_fd(const struct binary *binary, int fd);
+
 #define CMD_ITERATE(hdr, cmd) for(struct load_command *cmd = (void *)((hdr) + 1), *end = (void *)((char *)(hdr) + (hdr)->sizeofcmds); cmd; cmd = (cmd->cmdsize > 0 && cmd->cmdsize < (uint32_t)((char *)end - (char *)cmd)) ? (void *)((char *)cmd + cmd->cmdsize) : NULL)
 
 #define r(sz) \
@@ -75,19 +78,5 @@ r(64)
 
 __attribute__((const)) bool b_is_armv7(struct binary *binary);
 
-__attribute__((const, always_inline))
-static inline prange_t x_prange(const struct binary *binary, addr_t addrbase, addr_t offbase, addr_t diff, size_t size) {
-    return (prange_t) {(char *)binary->load_base + (binary->is_address_indexed ? addrbase : offbase) + diff, size};
-}
 
-__attribute__((const, always_inline))
-static inline range_t x_range(const struct binary *binary, addr_t addrbase, addr_t offbase, addr_t diff, size_t size) {
-    return (range_t) {binary, addrbase + diff, size};
-}
-
-
-__attribute__((const, always_inline))
-static inline range_t x_off_range(const struct binary *binary, addr_t addrbase, addr_t offbase, addr_t diff, size_t size) {
-    return (range_t) {binary, offbase + diff, size};
-}
-
+__attribute__((const)) prange_t x_prange(const struct binary *binary, addr_t addrbase, addr_t offbase, addr_t diff, size_t size);

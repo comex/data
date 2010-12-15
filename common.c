@@ -1,6 +1,9 @@
 #include "common.h"
 #include <sys/stat.h>
 #include <arpa/inet.h>
+#include <sys/time.h>
+#include <sys/proc.h>
+#include <sys/sysctl.h>
 
 prange_t pdup(prange_t range) {
     void *buf = malloc(range.size);
@@ -20,6 +23,11 @@ void check_range_has_addr(range_t range, addr_t addr) {
     if(addr < range.start || addr >= (range.start | range.size)) {
         die("bad address 0x%08x (not in range %08x-%08x)", addr, range.start, range.start + (uint32_t) range.size);
     }
+}
+    
+bool is_valid_range(prange_t range) {
+    char c;
+    return !mincore(range.start, range.size, &c);
 }
 
 static inline bool parse_hex_digit(char digit, uint8_t *result) {

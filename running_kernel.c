@@ -115,7 +115,7 @@ void b_inject_into_running_kernel(const struct binary *to_load, uint32_t sysent)
             int32_t fs = seg->filesize;
             if(seg->vmsize < fs) fs = seg->vmsize;
             // if prebound, slide = 0
-            vm_offset_t of = (vm_offset_t) x_prange(to_load, seg->vmaddr, seg->fileoff, 0, 0).start;
+            vm_offset_t of = (vm_offset_t) x_prange(to_load, seg->vmaddr, seg->fileoff, 0, seg->filesize).start;
             vm_address_t ad = seg->vmaddr;
             struct section *sections = (void *) (seg + 1);
             for(int i = 0; i < seg->nsects; i++) {

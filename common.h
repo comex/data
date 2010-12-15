@@ -20,7 +20,7 @@ __attribute__((unused)) static const char *_arg = MAP_FAILED;
     fprintf(stderr, "%s: ", __func__); \
     if(_arg != MAP_FAILED) fprintf(stderr, "%s: ", _arg); \
     fprintf(stderr, fmt "\n", ##args); \
-    abort(); /*exit(1);*/ \
+    abort(); \
 } while(0)
 #define edie(fmt, args...) die(fmt ": %s", ##args, strerror(errno))
 
@@ -35,10 +35,7 @@ prange_t pdup(prange_t range);
 void pfree(prange_t range);
 void punmap(prange_t range);
 
-static inline bool is_valid_range(prange_t range) {
-    char c;
-    return !mincore(range.start, range.size, (void *) &c);
-}
+bool is_valid_range(prange_t range);
 
 prange_t parse_hex_string(const char *string);
 

@@ -27,7 +27,7 @@ int main(int argc, char **argv) {
         case 'k': {
             char *kern_fn;
             if(!(kern_fn = *argv++)) goto usage;
-            b_load_macho(&kern, kern_fn, true);
+            b_load_macho(&kern, kern_fn, false);
             break;
         }
 #ifdef IMG3_SUPPORT
@@ -79,6 +79,29 @@ int main(int argc, char **argv) {
             return 0;
         }
         case 'q': {
+            if(!kern.valid) goto usage;
+            char *out_kern = *argv++;
+            if(!out_kern) goto usage;
+            b_macho_store(&kern, out_kern);
+
+            int fd = open(out_kern, O_RDWR);
+            if(fd == -1) {
+                edie("couldn't re-open output kc"); 
+            }
+
+            if(!*argv) goto usage;
+            char *to_load_fn;
+            while(to_load_fn = *argv++) {
+                struct binary to_load;
+                b_init(&to_load);
+                b_load_macho(&to_load, to_load_fn, true);
+                if(!(to_load.mach_hdr->flags & MH_PREBOUND)) {
+                    b_relocate(&to_load, &kern, b_allocate_from_macho_fd(fd));
+                }
+                b_inject_into_macho_fd(&to_load, fd);
+            }
+            close(fd);
+
             return 0;
         }
 #ifdef __APPLE__
@@ -99,7 +122,7 @@ int main(int argc, char **argv) {
            "                      "
 #endif
                                  "-p kcode.dylib out.dylib      prelink\n"
-           "                      -q kcode.dylib out_kern       insert into kc\n"
+           "                      -q out_kern kcode.dylib       insert into kc\n"
 #ifdef __APPLE__
            "              -u f0000000                           unload\n"
 #endif

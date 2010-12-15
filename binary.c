@@ -172,6 +172,22 @@ rettype name(range_t range) { \
     die(intro " (%08x, %zx) not valid", range.start, range.size); \
 }
 
+__attribute__((const))
+inline prange_t x_prange(const struct binary *binary, addr_t addrbase, addr_t offbase, addr_t diff, size_t size) {
+    return (prange_t) {(char *)binary->load_base + (binary->is_address_indexed ? addrbase : offbase) + diff, size};
+}
+
+__attribute__((const))
+static inline range_t x_range(const struct binary *binary, addr_t addrbase, addr_t offbase, addr_t diff, size_t size) {
+    return (range_t) {binary, addrbase + diff, size};
+}
+
+
+__attribute__((const))
+static inline range_t x_off_range(const struct binary *binary, addr_t addrbase, addr_t offbase, addr_t diff, size_t size) {
+    return (range_t) {binary, offbase + diff, size};
+}
+
 DEFINE_RANGECONV(prange_t, rangeconv, "range", sfm_address, vmaddr, x_prange)
 DEFINE_RANGECONV(prange_t, rangeconv_off, "offset range", sfm_file_offset, fileoff, x_prange)
 DEFINE_RANGECONV(range_t, range_to_off_range, "range", sfm_address, vmaddr, x_off_range)
@@ -365,3 +381,89 @@ bool b_is_armv7(struct binary *binary) {
     return result;
 }
 
+uint32_t b_allocate_from_macho_fd(int fd) {
+    struct mach_header *hdr = mmap(NULL, 0x1000, PROT_READ, MAP_SHARED, fd, 0);
+    if(hdr == MAP_FAILED) edie("could not mmap hdr");
+    if(hdr->sizeofcmds > 0x1000 || hdr->sizeofcmds + sizeof(struct mach_header) > 0x1000) {
+        die("too many commands");
+    }
+
+    uint32_t max = 0;
+    CMD_ITERATE(hdr, cmd) {
+        if(cmd->cmd == LC_SEGMENT) {
+            struct segment_command *seg = (void *) cmd;
+            if(seg->vmaddr >= 0xf0000000 || seg->vmaddr + seg->vmsize < seg->vmaddr) {
+                die("overflow");
+            }
+            uint32_t newmax = seg->vmaddr + seg->vmsize;
+            if(newmax > max) max = newmax;
+        }
+    }
+
+    if(max == 0) {
+        die("no segments");
+    }
+
+    munmap(hdr, 0x1000);
+
+    return (max + 0xfff) & ~0xfff;
+}
+
+
+void b_inject_into_macho_fd(const struct binary *binary, int fd) {
+    off_t off = lseek(fd, 0, SEEK_SET);
+    struct mach_header *hdr = mmap(NULL, 0x1000, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if(hdr == MAP_FAILED) edie("could not mmap hdr in read/write mode");
+    if(hdr->sizeofcmds > 0x1000 || hdr->sizeofcmds + sizeof(struct mach_header) > 0x1000) {
+        die("too many commands");
+    }
+
+    struct segment_command *newseg = (void *) ((char *) (hdr + 1) + hdr->sizeofcmds);
+    off_t newseg_off = sizeof(struct mach_header) + hdr->sizeofcmds;
+
+    CMD_ITERATE(binary->mach_hdr, cmd) {
+        if(cmd->cmd == LC_SEGMENT) {
+            struct segment_command *seg = (void *) cmd;
+            if(seg->nsects > 1000) {
+                die("too many sections");
+            }
+            size_t size = sizeof(struct segment_command) + seg->nsects * sizeof(struct section);
+            if(newseg_off + size > 0x1000) {
+                die("not enough space");
+            }
+
+            memcpy(newseg, seg, size);
+
+            newseg->fileoff = (uint32_t) off;
+            prange_t pr = rangeconv((range_t) {binary, seg->vmaddr, seg->filesize});
+            if(pwrite(fd, pr.start, pr.size, off) != pr.size) {
+                die("couldn't write additional segment");
+            }
+
+            newseg = (void *) ((char *)newseg + size);
+            newseg_off += size;
+            
+            struct section *sections = (void *) (seg + 1);
+            for(int i = 0; i < seg->nsects; i++) {
+                struct section *sect = &sections[i];
+                if((sect->flags & SECTION_TYPE) == S_MOD_INIT_FUNC_POINTERS) {
+                    printf("note: constructor functions are present; hacking vm_pageout\n");
+                    uint32_t bytes_to_move = 12; // don't cut the MRC in two!
+                    addr_t vm_pageout = find_vm_pageout(kern);
+                    // allocate a new segment for the stub
+                    // push {lr}; ldr r3, [pc, #4]; blx r3; b next
+                    static const uint16_t part1[] = {0xb500, 0x4b01, 0x4798, 0xe001};
+                    // (bytes_to_move bytes of stuff)
+                    // pop {r3}; mov lr, r3; ldr r3, foo; bx r3
+                    static const uint16_t part2[] = {0xbc08, 0x469e, 0x4b00, 0x4718};
+            if(newseg_off + size > 0x1000) {
+                die("not enough space");
+            }
+                }
+                // ZEROFILL is okay because iBoot always zeroes vmsize - filesize
+            }
+        }
+    }
+
+    munmap(hdr, 0x1000);
+}
