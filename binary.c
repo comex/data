@@ -485,7 +485,11 @@ void b_inject_into_macho_fd(const struct binary *binary, int fd) {
 
     // now deal with the init pointers
     if(num_init_ptrs > 0) {
-        fprintf(stderr, "note: %d constructor functions are present; hacking vm_pageout\n", num_init_ptrs);
+        if(num_init_ptrs == 1) {
+            fprintf(stderr, "note: 1 constructor function is present; hacking vm_pageout\n");
+        } else {
+            fprintf(stderr, "note: %d constructor functions are present; hacking vm_pageout\n", num_init_ptrs);
+        }
         
         // ldr r3, [pc]; bx r3
         uint16_t part0[] = {0x4b00, 0x4718};
