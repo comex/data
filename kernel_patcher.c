@@ -6,7 +6,7 @@
 
 #define patch_range(name, addr, pr...) \
     ({ prange_t pr_ = pr; \
-       memcpy((char *) output.start + range_to_off((range_t) {binary, addr, pr_.size}), pr_.start, pr_.size); })
+       memcpy((char *) output.start + range_to_off_range((range_t) {binary, addr, pr_.size}).start, pr_.start, pr_.size); })
 
 #define patch(name, addr, typeof_to, to...) \
     ({ typeof_to to_[] = to; \

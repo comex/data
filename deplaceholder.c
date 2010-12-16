@@ -3,6 +3,7 @@
 #include "binary.h"
 #include "cc.h"
 #include "placeholder.h"
+#include "running_kernel.h"
 
 // count the number of set bits
 static int count_ones(uint32_t number) {
@@ -87,7 +88,7 @@ int main(int argc, char **argv) {
             break;
         case 'c':
             if(!p[1]) goto usage;
-            b_load_dyldcache(&cache, p[1]);
+            b_load_dyldcache(&cache, p[1], false);
             p += 2;
             break;
         case 'k': {
