@@ -511,6 +511,7 @@ void b_inject_into_macho_fd(const struct binary *binary, int fd) {
         b_init(&kern);
         b_fd_load_macho(&kern, fd, false);
         addr_t vm_pageout = find_vm_pageout(&kern);
+        fprintf(stderr, "vm_pageout = %08x\n", vm_pageout);
         prange_t vm_pageout_pr = rangeconv((range_t) {&kern, vm_pageout & ~1, bytes_to_move});
         range_t vm_pageout_off_range = range_to_off_range((range_t) {&kern, vm_pageout & ~1, sizeof(part0) + sizeof(uint32_t)});
 
@@ -592,7 +593,18 @@ void b_inject_into_macho_fd(const struct binary *binary, int fd) {
 }
 
 static addr_t find_vm_pageout(const struct binary *binary) {
-    range_t text = b_macho_segrange(binary, "__TEXT");
-    const char *string = "\"vm_pageout_iothread_external";
-    return find_bof(text, find_int32(text, find_bytes(text, string, strlen(string), 1, true), true), true) | 1;
+    static const struct binary *last_binary;
+    static addr_t last_vm_pageout;
+    
+    if(last_binary != binary) {
+        last_binary = binary;
+
+        range_t text = b_macho_segrange(binary, "__TEXT");
+        const char *string = "\"vm_pageout_iothread_external";
+        addr_t eof = find_int32(text, find_bytes(text, string, strlen(string), 1, true), true);
+        printf("eof=%08x\n", eof);
+        last_vm_pageout = find_bof(text, eof, true) | 1;
+    }
+
+    return last_vm_pageout;
 }
