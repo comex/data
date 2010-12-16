@@ -54,7 +54,7 @@ uint32_t b_lookup_sym(const struct binary *binary, char *sym) {
 
 static void relocate_area(const struct binary *binary, const struct binary *kern, uint32_t slide, uint32_t reloff, uint32_t nreloc) {
     struct relocation_info *things = rangeconv_off((range_t) {binary, reloff, nreloc * sizeof(struct relocation_info)}).start;
-    for(int i = 0; i < nreloc; i++) {
+    for(uint32_t i = 0; i < nreloc; i++) {
         assert(!things[i].r_pcrel);
         assert(things[i].r_length == 2);
         assert(things[i].r_type == 0);
@@ -95,7 +95,7 @@ void b_relocate(struct binary *binary, const struct binary *kern, uint32_t slide
             binary->last_seg = seg;
             printf("%.16s %08x\n", seg->segname, seg->vmaddr);
             struct section *sections = (void *) (seg + 1);
-            for(int i = 0; i < seg->nsects; i++) {
+            for(uint32_t i = 0; i < seg->nsects; i++) {
                 struct section *sect = &sections[i];
                 printf("   %.16s\n", sect->sectname);
                 uint8_t type = sect->flags & SECTION_TYPE;
@@ -105,7 +105,7 @@ void b_relocate(struct binary *binary, const struct binary *kern, uint32_t slide
                     uint32_t indirect_table_offset = sect->reserved1;
                     uint32_t *indirect = rangeconv_off((range_t) {binary, binary->dysymtab->indirectsymoff + indirect_table_offset*sizeof(uint32_t), (sect->size / 4) * sizeof(uint32_t)}).start;
                     uint32_t *things = rangeconv((range_t) {binary, sect->addr, sect->size}).start;
-                    for(int i = 0; i < sect->size / 4; i++) {
+                    for(uint32_t i = 0; i < sect->size / 4; i++) {
                         uint32_t sym = indirect[i];
                         switch(sym) {
                         case INDIRECT_SYMBOL_LOCAL:

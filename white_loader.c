@@ -18,6 +18,7 @@ static struct binary kern;
 
 int main(int argc, char **argv) {
     b_init(&kern);
+    (void) argc;
     argv++;
     while(1) {
         char *arg = *argv++;

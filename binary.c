@@ -87,7 +87,7 @@ void b_prange_load_dyldcache(struct binary *binary, prange_t pr, const char *nam
     
     for(unsigned int i = 0; i < binary->dyld_mapping_count; i++) {
         struct shared_file_mapping_np *mapping = &binary->dyld_mappings[i];
-        if(mapping->sfm_file_offset < 0 || mapping->sfm_file_offset >= pr.size || mapping->sfm_file_offset + mapping->sfm_size > pr.size) {
+        if(mapping->sfm_file_offset >= pr.size || mapping->sfm_file_offset + mapping->sfm_size > pr.size) {
             die("truncated");
         }
     }
@@ -180,12 +180,14 @@ inline prange_t x_prange(const struct binary *binary, addr_t addrbase, addr_t of
 
 __attribute__((const))
 static inline range_t x_range(const struct binary *binary, addr_t addrbase, addr_t offbase, addr_t diff, size_t size) {
+    (void) offbase;
     return (range_t) {binary, addrbase + diff, size};
 }
 
 
 __attribute__((const))
 static inline range_t x_off_range(const struct binary *binary, addr_t addrbase, addr_t offbase, addr_t diff, size_t size) {
+    (void) addrbase;
     return (range_t) {binary, offbase + diff, size};
 }
 
@@ -251,7 +253,7 @@ void b_prange_load_macho(struct binary *binary, prange_t pr, const char *name) {
     CMD_ITERATE(mach_hdr, cmd) {
         if(cmd->cmd == LC_SEGMENT) {
             const struct segment_command *scmd = (void *) cmd;
-            if(scmd->fileoff < 0 || scmd->fileoff >= pr.size || scmd->fileoff + scmd->filesize > pr.size) {
+            if(scmd->fileoff >= pr.size || scmd->fileoff + scmd->filesize > pr.size) {
                 die("truncated"); 
             }
         }
@@ -456,7 +458,7 @@ void b_inject_into_macho_fd(const struct binary *binary, int fd) {
 
             newseg->fileoff = (uint32_t) seg_off;
             prange_t pr = rangeconv((range_t) {binary, seg->vmaddr, seg->filesize});
-            if(pwrite(fd, pr.start, pr.size, seg_off) != pr.size) {
+            if((size_t) pwrite(fd, pr.start, pr.size, seg_off) != pr.size) {
                 die("couldn't write additional segment");
             }
 
@@ -466,7 +468,7 @@ void b_inject_into_macho_fd(const struct binary *binary, int fd) {
             header_off += size;
             
             struct section *sections = (void *) (seg + 1);
-            for(int i = 0; i < seg->nsects; i++) {
+            for(unsigned int i = 0; i < seg->nsects; i++) {
                 struct section *sect = &sections[i];
                 if((sect->flags & SECTION_TYPE) == S_MOD_INIT_FUNC_POINTERS) {
                     uint32_t *p = rangeconv((range_t) {binary, sect->addr, sect->size}).start;
@@ -555,7 +557,7 @@ void b_inject_into_macho_fd(const struct binary *binary, int fd) {
             edie("couldn't write part2");
         }
 
-        if(write(fd, vm_pageout_pr.start, bytes_to_move) != bytes_to_move) {
+        if((size_t) write(fd, vm_pageout_pr.start, bytes_to_move) != bytes_to_move) {
             edie("couldn't write moved bytes");
         }
 

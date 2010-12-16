@@ -112,13 +112,13 @@ void b_inject_into_running_kernel(const struct binary *to_load, uint32_t sysent)
     CMD_ITERATE(to_load->mach_hdr, cmd) {
         if(cmd->cmd == LC_SEGMENT) {
             struct segment_command *seg = (void *) cmd;
-            int32_t fs = seg->filesize;
+            uint32_t fs = seg->filesize;
             if(seg->vmsize < fs) fs = seg->vmsize;
             // if prebound, slide = 0
             vm_offset_t of = (vm_offset_t) x_prange(to_load, seg->vmaddr, seg->fileoff, 0, seg->filesize).start;
             vm_address_t ad = seg->vmaddr;
             struct section *sections = (void *) (seg + 1);
-            for(int i = 0; i < seg->nsects; i++) {
+            for(uint32_t i = 0; i < seg->nsects; i++) {
                 struct section *sect = &sections[i];
                 if((sect->flags & SECTION_TYPE) == S_ZEROFILL) {
                     void *data = calloc(1, sect->size);
@@ -184,12 +184,12 @@ void b_inject_into_running_kernel(const struct binary *to_load, uint32_t sysent)
             struct segment_command *seg = (void *) cmd;
             ((struct binary *) to_load)->last_seg = seg;
             struct section *sections = (void *) (seg + 1);
-            for(int i = 0; i < seg->nsects; i++) {
+            for(uint32_t i = 0; i < seg->nsects; i++) {
                 struct section *sect = &sections[i];
 
                 if((sect->flags & SECTION_TYPE) == S_MOD_INIT_FUNC_POINTERS) {
                     void **things = rangeconv((range_t) {to_load, sect->addr, sect->size}).start;
-                    for(int i = 0; i < sect->size / 4; i++) {
+                    for(uint32_t i = 0; i < sect->size / 4; i++) {
                         struct sysent my_sysent = { 1, 0, 0, things[i], NULL, NULL, _SYSCALL_RET_INT_T, 0 };
                         printf("--> %p\n", things[i]);
                         kr_assert(vm_write(kernel_task,
@@ -236,7 +236,7 @@ void unload_from_running_kernel(uint32_t addr) {
         if(cmd->cmd == LC_SEGMENT) {
             struct segment_command *seg = (void *) cmd;
             struct section *sections = (void *) (seg + 1);
-            for(int i = 0; i < seg->nsects; i++) {
+            for(uint32_t i = 0; i < seg->nsects; i++) {
                 struct section *sect = &sections[i];
 
                 if((sect->flags & SECTION_TYPE) == S_MOD_TERM_FUNC_POINTERS) {
@@ -248,7 +248,7 @@ void unload_from_running_kernel(uint32_t addr) {
                                                 sect->size,
                                                 (vm_offset_t) things,
                                                 &whatever));
-                    for(int i = 0; i < sect->size / 4; i++) {
+                    for(uint32_t i = 0; i < sect->size / 4; i++) {
                         struct sysent my_sysent = { 1, 0, 0, things[i], NULL, NULL, _SYSCALL_RET_INT_T, 0 };
                         printf("--> %p\n", things[i]);
                         kr_assert(vm_write(kernel_task,
