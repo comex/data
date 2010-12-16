@@ -6,6 +6,7 @@ struct binary;
 // Specify align as 0 if you only expect to find it at one place anyway.
 addr_t find_data(range_t range, char *to_find, int align, bool must_find);
 addr_t find_string(range_t range, const char *string, int align, bool must_find);
+addr_t find_bytes(range_t range, const char *bytes, size_t len, int align, bool must_find);
 addr_t find_int32(range_t range, uint32_t number, bool must_find);
 
 // lol what is this

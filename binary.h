@@ -42,7 +42,7 @@ __attribute__((const)) prange_t rangeconv(range_t range);
 // offset -> buffer
 __attribute__((const)) prange_t rangeconv_off(range_t range);
 // address -> offset
-__attribute__((const)) addr_t range_to_off(range_t range);
+__attribute__((const)) range_t range_to_off_range(range_t range);
 
 void b_init(struct binary *binary);
 
@@ -54,6 +54,7 @@ void b_dyldcache_load_macho(struct binary *binary, const char *filename);
 
 void b_macho_load_symbols(struct binary *binary);
 void b_load_macho(struct binary *binary, const char *path, bool rw);
+void b_fd_load_macho(struct binary *binary, int fd, bool rw);
 void b_prange_load_macho(struct binary *binary, prange_t range, const char *name);
 
 __attribute__((pure)) range_t b_macho_segrange(const struct binary *binary, const char *segname);

@@ -73,6 +73,11 @@ prange_t load_file(const char *filename, bool rw, mode_t *mode) {
     if(fd == -1) {
         edie("could not open");
     }
+    return load_fd(fd, rw);
+#undef _arg
+}
+
+prange_t load_fd(int fd, bool rw) {
     off_t end = lseek(fd, 0, SEEK_END);
     if(sizeof(off_t) > sizeof(size_t) && end > (off_t) SIZE_MAX) {
         die("too big: %lld", (long long) end);
@@ -82,7 +87,6 @@ prange_t load_file(const char *filename, bool rw, mode_t *mode) {
         edie("could not mmap buf");
     }
     return (prange_t) {buf, (size_t) end};
-#undef _arg
 }
 
 void store_file(prange_t range, const char *filename, mode_t mode) {

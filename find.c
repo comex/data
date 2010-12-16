@@ -1,7 +1,7 @@
 #include "find.h"
 #include "binary.h"
 
-static addr_t find_data_int(range_t range, int16_t *buf, ssize_t pattern_size, size_t offset, int align, bool must_find, const char *name) {
+static addr_t find_data_raw(range_t range, int16_t *buf, ssize_t pattern_size, size_t offset, int align, bool must_find, const char *name) {
     int8_t table[256];
     for(int c = 0; c < 256; c++) {
         table[c] = pattern_size;
@@ -92,7 +92,7 @@ addr_t find_data(range_t range, char *to_find, int align, bool must_find) {
     if(offset == -1) {
         die("pattern [%s] doesn't have an offset", to_find);
     }
-    addr_t result = find_data_int(range, buf, pattern_size, offset, align, must_find, to_find);
+    addr_t result = find_data_raw(range, buf, pattern_size, offset, align, must_find, to_find);
 #ifdef PROFILING
     clock_t b = clock();
     printf("find_data [%s] took %d/%d\n", to_find, (int)(b - a), (int)CLOCKS_PER_SEC);
@@ -107,11 +107,20 @@ addr_t find_string(range_t range, const char *string, int align, bool must_find)
     for(unsigned int i = 0; i < len; i++) {
         buf[i+1] = (uint8_t) string[i];
     }
-    addr_t result = find_data_int(range, buf, len, 1, align, must_find, string);
+    addr_t result = find_data_raw(range, buf, len + 2, 1, align, must_find, string);
     free(buf);
     return result;
 }
 
+addr_t find_bytes(range_t range, const char *bytes, size_t len, int align, bool must_find) {
+    int16_t *buf = malloc(sizeof(int16_t) * (len + 2));
+    for(unsigned int i = 0; i < len; i++) {
+        buf[i] = (uint8_t) bytes[i];
+    }
+    addr_t result = find_data_raw(range, buf, len, 0, align, must_find, "bytes");
+    free(buf);
+    return result;
+}
 addr_t find_int32(range_t range, uint32_t number, bool must_find) {
     prange_t pr = rangeconv(range);
     char *start = pr.start;

@@ -40,6 +40,8 @@ bool is_valid_range(prange_t range);
 prange_t parse_hex_string(const char *string);
 
 prange_t load_file(const char *filename, bool rw, mode_t *mode);
+prange_t load_fd(int fd, bool rw);
+
 void store_file(prange_t range, const char *filename, mode_t mode);
 
 uint32_t parse_hex_uint32(char *string);
