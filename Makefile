@@ -13,6 +13,9 @@ AR ?= ar
 libdata.a: common.o binary.o running_kernel.o link.o find.o cc.o lzss.o 
 	$(AR) rcs $@ $^
 
+check_sanity: libdata.a check_sanity.o
+	$(GCC) $(CFLAGS) -o $@ check_sanity.o -L. -ldata
+
 white_loader: libdata.a white_loader.o
 	$(GCC) $(CFLAGS) -o $@ white_loader.o -L. -ldata
 ifneq ($(shell which lipo),)
@@ -20,4 +23,4 @@ ifneq ($(shell which lipo),)
 endif
 	
 clean:
-	rm -f *.o libdata.a white_loader
+	rm -f *.o libdata.a white_loader check_sanity
