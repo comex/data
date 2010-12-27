@@ -117,7 +117,6 @@ void b_inject_into_running_kernel(const struct binary *to_load, uint32_t sysent)
             // if prebound, slide = 0
             vm_offset_t of = (vm_offset_t) x_prange(to_load, seg->vmaddr, seg->fileoff, 0, seg->filesize).start;
             vm_address_t ad = seg->vmaddr;
-            struct section *sections = (void *) (seg + 1);
             while(fs > 0) {
                 // complete headbang.
                 //printf("(%.16s) reading %x %08x -> %08x\n", seg->segname, fs, (uint32_t) of, (uint32_t) ad);
