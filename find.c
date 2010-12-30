@@ -187,7 +187,7 @@ addr_t find_bof(range_t range, addr_t eof, bool is_thumb) {
 }
 
 uint32_t resolve_ldr(struct binary *binary, addr_t addr) {
-    uint32_t val = read32(binary, addr & ~1); 
+    uint32_t val = b_read32(binary, addr & ~1); 
     addr_t target;
     if(addr & 1) {
         addr_t base = ((addr + 3) & ~3);
@@ -206,7 +206,7 @@ uint32_t resolve_ldr(struct binary *binary, addr_t addr) {
             die("weird ARM instruction %08x at %08x", val, addr);
         }
     }
-    return read32(binary, target);
+    return b_read32(binary, target);
 }
 
 addr_t find_bl(range_t *range) {

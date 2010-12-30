@@ -68,7 +68,7 @@ void b_inject_into_macho_fd(const struct binary *binary, int fd);
 #define CMD_ITERATE(hdr, cmd) for(struct load_command *cmd = (void *)((hdr) + 1), *end = (void *)((char *)(hdr) + (hdr)->sizeofcmds); cmd; cmd = (cmd->cmdsize > 0 && cmd->cmdsize < (uint32_t)((char *)end - (char *)cmd)) ? (void *)((char *)cmd + cmd->cmdsize) : NULL)
 
 #define r(sz) \
-static inline uint##sz##_t read##sz(const struct binary *binary, addr_t addr) { \
+static inline uint##sz##_t b_read##sz(const struct binary *binary, addr_t addr) { \
     return *(uint##sz##_t *)(rangeconv((range_t) {binary, addr, sz/8}).start); \
 }
 
