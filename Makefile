@@ -13,5 +13,8 @@ AR ?= ar
 libdata.a: common.o binary.o running_kernel.o link.o find.o cc.o lzss.o 
 	$(AR) rcs $@ $^
 
+check_sanity: libdata.a check_sanity.o
+	$(GCC) $(CFLAGS) -o $@ check_sanity.o -L. -ldata
+
 clean:
-	rm -f *.o libdata.a 
+	rm -f *.o libdata.a check_sanity

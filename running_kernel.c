@@ -6,6 +6,7 @@
 #include "fat.h"
 #include "link.h"
 #include <assert.h>
+extern host_priv_t host_priv_self();
 // copied from xnu
 
 struct proc;
@@ -52,13 +53,18 @@ uint32_t b_allocate_from_running_kernel(const struct binary *binary) {
                 struct segment_command *seg = (void *) cmd;
                 if(seg->vmsize == 0) continue;
                 vm_address_t address = seg->vmaddr;
-                printf("allocate %08x %08x\n", (unsigned int) address, (unsigned int) seg->vmsize);
+                printf("prebound allocate %08x %08x\n", (unsigned int) address, (unsigned int) seg->vmsize);
                 kr_assert(vm_allocate(kernel_task,
                                       &address,
                                       seg->vmsize,
                                       VM_FLAGS_FIXED));
 
                 assert(address == seg->vmaddr);
+                kr_assert(vm_wire(mach_host_self(),
+                                  kernel_task,
+                                  address,
+                                  seg->vmsize,
+                                  VM_PROT_READ));
             }
         }
         return 0;
@@ -71,13 +77,18 @@ uint32_t b_allocate_from_running_kernel(const struct binary *binary) {
                     struct segment_command *seg = (void *) cmd;
                     if(seg->vmsize == 0) continue;
                     vm_address_t address = seg->vmaddr + slide;
-                    printf("allocate %08x %08x\n", (int) address, (int) seg->vmsize);
+                    printf("allocate %08x %08x for %.16s (slide=%x)\n", (int) address, (int) seg->vmsize, seg->segname, (int) slide);
                     kern_return_t kr = vm_allocate(kernel_task,
                                                    &address,
                                                    seg->vmsize,
                                                    VM_FLAGS_FIXED);
                     if(!kr) {
                         assert(address == seg->vmaddr + slide);
+                        kr_assert(vm_wire(mach_host_self(),
+                                          kernel_task,
+                                          address,
+                                          seg->vmsize,
+                                          VM_PROT_READ));
                         continue;
                     }
                     // Bother, it didn't work.  So we need to increase the slide...
@@ -117,18 +128,6 @@ void b_inject_into_running_kernel(const struct binary *to_load, uint32_t sysent)
             // if prebound, slide = 0
             vm_offset_t of = (vm_offset_t) x_prange(to_load, seg->vmaddr, seg->fileoff, 0, seg->filesize).start;
             vm_address_t ad = seg->vmaddr;
-            struct section *sections = (void *) (seg + 1);
-            for(uint32_t i = 0; i < seg->nsects; i++) {
-                struct section *sect = &sections[i];
-                if((sect->flags & SECTION_TYPE) == S_ZEROFILL) {
-                    void *data = calloc(1, sect->size);
-                    kr_assert(vm_write(kernel_task,
-                                       (vm_address_t) sect->addr,
-                                       (vm_offset_t) data,
-                                       sect->size));
-                    free(data);
-                }
-            }
             while(fs > 0) {
                 // complete headbang.
                 //printf("(%.16s) reading %x %08x -> %08x\n", seg->segname, fs, (uint32_t) of, (uint32_t) ad);
