@@ -13,11 +13,5 @@ AR ?= ar
 libdata.a: common.o binary.o running_kernel.o link.o find.o cc.o lzss.o 
 	$(AR) rcs $@ $^
 
-white_loader: libdata.a white_loader.o
-	$(GCC) $(CFLAGS) -o $@ white_loader.o -L. -ldata
-ifneq ($(shell which lipo),)
-	bash -c 'if [ -n "`lipo -info $@ | grep arm`" ]; then ldid -Sent.plist $@; fi'
-endif
-	
 clean:
-	rm -f *.o libdata.a white_loader
+	rm -f *.o libdata.a 
