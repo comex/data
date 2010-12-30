@@ -1,4 +1,4 @@
-all: white_loader
+all: libdata.a
 
 GCC ?= /Developer/Platforms/iPhoneOS.platform/Developer/usr/bin/gcc-4.2 -arch armv7 -isysroot /Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS4.2.sdk/ -mapcs-frame -fomit-frame-pointer -mthumb -fno-builtin-printf -fno-builtin-memset
 CFLAGS ?= -g3 -std=gnu99 -Os -Wall -Wextra -Wno-parentheses -Werror
