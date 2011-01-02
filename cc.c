@@ -54,23 +54,19 @@ prange_t decrypt_and_decompress(uint32_t key_bits, prange_t key, prange_t iv, pr
     clock_t tv2 = clock();
 #endif
     if(result != kCCSuccess) {
-        free(outbuf);
         die("decryption failed: %d", (unsigned int) result);
     }
     if(outbuf_len < sizeof(struct comp_header)) {
-        free(outbuf);
         die("too small decrypted result");
     }
     struct comp_header *ch = outbuf;
     if(!(ch->signature == 0x706d6f63 && ch->compression_type == 0x73737a6c)) {
-        free(outbuf);
         die("nonsense decrypted result is not complzss (%x %x)", ch->signature, ch->compression_type);
     }
     uint32_t length_compressed = ntohl(ch->length_compressed);
     uint32_t length_uncompressed = ntohl(ch->length_uncompressed);
     uint32_t checksum = ntohl(ch->checksum);
     if((outbuf_len - sizeof(struct comp_header)) < length_compressed) {
-        free(outbuf);
         die("too big length_compressed %x > %lx", length_compressed, outbuf_len - sizeof(struct comp_header));
     }
     // not a fan of buffer overflows
@@ -81,7 +77,6 @@ prange_t decrypt_and_decompress(uint32_t key_bits, prange_t key, prange_t iv, pr
 
     int actual_length_uncompressed = decompress_lzss(decbuf, (void *) (ch + 1), length_compressed);
     if(actual_length_uncompressed < 0 || (unsigned int) actual_length_uncompressed != length_uncompressed) {
-        free(outbuf);
         die("invalid complzss thing");
     }
 

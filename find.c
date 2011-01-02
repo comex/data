@@ -39,7 +39,6 @@ static addr_t find_data_raw(range_t range, int16_t *buf, ssize_t pattern_size, s
             goto keep_going;
         }
         if(foundit) {
-            free(buf);
             die("found [%s] multiple times in range: first at %08x then at %08x", name, foundit, new);
         }
         foundit = new;
@@ -54,7 +53,6 @@ static addr_t find_data_raw(range_t range, int16_t *buf, ssize_t pattern_size, s
     if(foundit) {
         return foundit + offset;
     } else if(must_find) {
-        free(buf);
         die("didn't find [%s] in range (%x, %zx)", name, range.start, range.size);
     } else {
         return 0;
@@ -65,7 +63,7 @@ addr_t find_data(range_t range, char *to_find, int align, bool must_find) {
 #ifdef PROFILING
     clock_t a = clock();
 #endif
-    int16_t *buf = malloc(sizeof(int16_t) * 128);
+    int16_t buf[128];
     ssize_t pattern_size = 0;
     ssize_t offset = -1;
     char *to_find_ = strdup(to_find);
@@ -95,7 +93,6 @@ addr_t find_data(range_t range, char *to_find, int align, bool must_find) {
         die("pattern [%s] doesn't have an offset", to_find);
     }
     addr_t result = find_data_raw(range, buf, pattern_size, offset, align, must_find, to_find);
-    free(buf);
 #ifdef PROFILING
     clock_t b = clock();
     printf("find_data [%s] took %d/%d\n", to_find, (int)(b - a), (int)CLOCKS_PER_SEC);

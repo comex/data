@@ -15,12 +15,13 @@
 #include <time.h>
 #endif
 
-typedef void (* __attribute__((noreturn)) death_func_t )(const char *message);
-void set_death_func(death_func_t new_func);
-__attribute__((noreturn)) void xdie(const char *fmt, ...);
-
 __attribute__((unused)) static const char *_arg = MAP_FAILED;
-#define die(fmt, args...) ((_arg) == MAP_FAILED ? xdie("%s: " fmt "\n", __func__, ##args) : xdie("%s: %s: " fmt "\n", __func__, _arg, ##args))
+#define die(fmt, args...) do { \
+    fprintf(stderr, "%s: ", __func__); \
+    if(_arg != MAP_FAILED) fprintf(stderr, "%s: ", _arg); \
+    fprintf(stderr, fmt "\n", ##args); \
+    abort(); \
+} while(0)
 #define edie(fmt, args...) die(fmt ": %s", ##args, strerror(errno))
 
 struct binary;
