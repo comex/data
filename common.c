@@ -80,14 +80,14 @@ prange_t load_file(const char *filename, bool rw, mode_t *mode) {
 prange_t load_fd(int fd, bool rw) {
     off_t end = lseek(fd, 0, SEEK_END);
     if(end == 0) {
-        fprintf("load_fd: warning: mapping an empty file\n");
+        fprintf(stderr, "load_fd: warning: mapping an empty file\n");
     }
     if(sizeof(off_t) > sizeof(size_t) && end > (off_t) SIZE_MAX) {
         die("too big: %lld", (long long) end);
     }
     void *buf = mmap(NULL, (size_t) end, PROT_READ | (rw ? PROT_WRITE : 0), MAP_PRIVATE, fd, 0);
     if(buf == MAP_FAILED) {
-        edie("could not mmap buf (end=%zd)");
+        edie("could not mmap buf (end=%zd)", (size_t) end);
     }
     return (prange_t) {buf, (size_t) end};
 }
