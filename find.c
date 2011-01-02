@@ -137,24 +137,6 @@ addr_t find_int32(range_t range, uint32_t number, bool must_find) {
     }
 }
 
-uintptr_t preplace32_a(prange_t range, uint32_t a) {
-    for(uintptr_t addr = (uintptr_t)range.start; addr + sizeof(uint32_t) <= (uintptr_t)range.start + range.size; addr++) {
-        if(*(uint32_t *)addr == a) {
-            return addr;
-        }
-    }
-    //fprintf(stderr, "preplace32: warning: didn't find %08x anywhere\n", a);
-    return 0;
-}
-
-void preplace32_b(prange_t range, uintptr_t start, uint32_t a, uint32_t b) {
-    for(uintptr_t addr = start; addr + sizeof(uint32_t) <= (uintptr_t)range.start + range.size; addr++) {
-        if(*(uint32_t *)addr == a) {
-            *(uint32_t *)addr = b;
-        }
-    }
-}
-
 addr_t find_bof(range_t range, addr_t eof, bool is_thumb) {
     // push {..., lr}; add r7, sp, ...
     addr_t addr = (eof - 1) & ~1;

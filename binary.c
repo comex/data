@@ -64,6 +64,7 @@ static void do_dyld_hdr(struct binary *binary) {
         die("insane mapping count: %u", binary->dyld_hdr->mappingCount);
     }
     binary->dyld_mapping_count = binary->dyld_hdr->mappingCount;
+    binary->dyld_mappings = (void *) ((char *)binary->dyld_hdr + binary->dyld_hdr->mappingOffset);
 }
 
 void b_load_dyldcache(struct binary *binary, const char *path, bool rw) {
@@ -74,6 +75,7 @@ void b_prange_load_dyldcache(struct binary *binary, prange_t pr, const char *nam
 #define _arg name
     binary->valid = true;
     binary->is_address_indexed = false;
+    binary->load_base = pr.start;
 
     if(pr.size < sizeof(*binary->dyld_hdr)) {
         die("truncated");
@@ -101,7 +103,6 @@ void b_load_running_dyldcache(struct binary *binary, void *baseaddr) {
     binary->load_base = NULL;
     binary->limit = NULL;
     do_dyld_hdr(binary);
-    binary->dyld_mappings = (void *) ((char *)binary->dyld_hdr + binary->dyld_hdr->mappingOffset);
 }
 
 range_t b_dyldcache_nth_segment(const struct binary *binary, unsigned int n) {
