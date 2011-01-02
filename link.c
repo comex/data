@@ -33,7 +33,7 @@ uint32_t b_lookup_sym(const struct binary *binary, char *sym) {
     }
     if(sym[0] == '$' && sym[1] == '_') {
         // lol...
-        char *to_find = malloc(strlen(sym)+1);
+        char *to_find = alloca(strlen(sym)+1);
         char *p = to_find;
         while(1) {
             char c = *sym++;
@@ -46,7 +46,6 @@ uint32_t b_lookup_sym(const struct binary *binary, char *sym) {
             if(!c) break;
         }
         uint32_t result = find_data(b_macho_segrange(binary, "__TEXT"), to_find, 0, true);
-        free(to_find);
         return result;
     }
     return b_sym(binary, sym, true);
@@ -55,9 +54,11 @@ uint32_t b_lookup_sym(const struct binary *binary, char *sym) {
 static void relocate_area(const struct binary *binary, const struct binary *kern, uint32_t slide, uint32_t reloff, uint32_t nreloc) {
     struct relocation_info *things = rangeconv_off((range_t) {binary, reloff, nreloc * sizeof(struct relocation_info)}).start;
     for(uint32_t i = 0; i < nreloc; i++) {
-        assert(!things[i].r_pcrel);
-        assert(things[i].r_length == 2);
-        assert(things[i].r_type == 0);
+        if(things[i].r_pcrel ||
+           things[i].r_length != 2 ||
+           things[i].r_type != 0) {
+            die("invalid relocation");
+        }
         uint32_t thing = /*reloc_base + */things[i].r_address;
         uint32_t *p = rangeconv((range_t) {binary, thing, 4}).start;
         if(things[i].r_extern) {
@@ -83,8 +84,13 @@ void b_relocate(struct binary *binary, const struct binary *kern, uint32_t slide
             die("unrecognized load command %08x", cmd->cmd);
         }
     }
-    assert(binary->symtab);
-    assert(binary->dysymtab);
+
+    if(!binary->symtab) {
+        die("wanted to relocate but there is no symtab");
+    }
+    if(!binary->dysymtab) {
+        die("wanted to relocate but there is no dysymtab");
+    }
     
     relocate_area(binary, kern, slide, binary->dysymtab->locreloff, binary->dysymtab->nlocrel);
     relocate_area(binary, kern, slide, binary->dysymtab->extreloff, binary->dysymtab->nextrel);

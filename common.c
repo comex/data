@@ -4,6 +4,28 @@
 #include <sys/time.h>
 #include <sys/proc.h>
 #include <sys/sysctl.h>
+#include <stdarg.h>
+#include <stdio.h>
+
+static death_func_t death_func;
+
+void set_death_func(death_func_t new_func) {
+    death_func = new_func;
+}
+
+__attribute__((noreturn)) void xdie(const char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    if(death_func) {
+        char *message;
+        vasprintf(&message, fmt, ap);
+        death_func(message);
+    } else {
+        vfprintf(stderr, fmt, ap);
+        abort();
+    }
+    va_end(ap);
+}
 
 prange_t pdup(prange_t range) {
     void *buf = malloc(range.size);
