@@ -49,7 +49,6 @@ void b_init(struct binary *binary);
 void b_load_dyldcache(struct binary *binary, const char *path, bool rw);
 void b_prange_load_dyldcache(struct binary *binary, prange_t range, const char *name);
 void b_load_running_dyldcache(struct binary *binary, void *baseaddr);
-range_t b_dyldcache_nth_segment(const struct binary *binary, unsigned int n);
 void b_dyldcache_load_macho(struct binary *binary, const char *filename);
 
 void b_macho_load_symbols(struct binary *binary);
@@ -60,6 +59,7 @@ void b_prange_load_macho(struct binary *binary, prange_t range, const char *name
 __attribute__((pure)) range_t b_macho_segrange(const struct binary *binary, const char *segname);
 void b_macho_store(struct binary *binary, const char *path);
 
+range_t b_nth_segment(const struct binary *binary, unsigned int n);
 addr_t b_sym(const struct binary *binary, const char *name, bool to_execute);
 
 uint32_t b_allocate_from_macho_fd(int fd);

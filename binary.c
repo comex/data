@@ -105,15 +105,6 @@ void b_load_running_dyldcache(struct binary *binary, void *baseaddr) {
     do_dyld_hdr(binary);
 }
 
-range_t b_dyldcache_nth_segment(const struct binary *binary, unsigned int n) {
-    if(n < binary->dyld_mapping_count) {
-        ((struct binary *) binary)->last_sfm = &binary->dyld_mappings[n];
-        return (range_t) {binary, (addr_t) binary->dyld_mappings[n].sfm_address, (size_t) binary->dyld_mappings[n].sfm_size};
-    } else {
-        return (range_t) {binary, 0, 0};
-    }
-}
-
 void b_dyldcache_load_macho(struct binary *binary, const char *filename) {
     if(binary->dyld_hdr->imagesCount > 1000) {
         die("insane images count");
@@ -592,6 +583,29 @@ void b_inject_into_macho_fd(const struct binary *binary, int fd) {
 
     munmap(hdr, 0x1000);
 }
+
+range_t b_nth_segment(const struct binary *binary, unsigned int n) {
+    if(binary->dyld_hdr) {
+        if(n < binary->dyld_mapping_count) {
+            ((struct binary *) binary)->last_sfm = &binary->dyld_mappings[n];
+            return (range_t) {binary, (addr_t) binary->dyld_mappings[n].sfm_address, (size_t) binary->dyld_mappings[n].sfm_size};
+        }
+    } else {
+        CMD_ITERATE(binary->mach_hdr, cmd) {
+            if(cmd->cmd == LC_SEGMENT) {
+                struct segment_command *seg = (void *) cmd;
+                if(seg->filesize == 0) continue;
+                if(n-- == 0) {
+                    return (range_t) {binary, seg->vmaddr, seg->filesize};
+                }
+            }
+        }
+    }
+    return (range_t) {binary, 0, 0};
+}
+
+
+// this should not be here, obviously
 
 static addr_t find_vm_pageout(const struct binary *binary) {
     static const struct binary *last_binary;

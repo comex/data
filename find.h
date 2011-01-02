@@ -15,4 +15,4 @@ uint32_t resolve_ldr(struct binary *binary, addr_t addr);
 
 addr_t find_bl(range_t *range);
 
-addr_t b_dyldcache_find_anywhere(struct binary *binary, char *to_find, int align);
+addr_t b_find_anywhere(struct binary *binary, char *to_find, int align);

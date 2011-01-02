@@ -248,12 +248,11 @@ addr_t find_bl(range_t *range) {
     return baseaddr + diff;
 }
 
-addr_t b_dyldcache_find_anywhere(struct binary *binary, char *to_find, int align) {
+addr_t b_find_anywhere(struct binary *binary, char *to_find, int align) {
     range_t range;
-    for(int i = 0; (range = b_dyldcache_nth_segment(binary, i)).start; i++) {
+    for(int i = 0; (range = b_nth_segment(binary, i)).start; i++) {
         addr_t result = find_data(range, to_find, align, false);
         if(result) return result;
     }
-    die("didn't find [%s] /anywhere/", to_find);
+    die("didn't find [%s] anywhere", to_find);
 }
-
