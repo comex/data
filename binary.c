@@ -27,7 +27,7 @@ void b_macho_load_symbols(struct binary *binary) {
         } else if(cmd->cmd == LC_DYSYMTAB) {
             binary->dysymtab = (void *) cmd;
         } else if(cmd->cmd == LC_DYLD_INFO_ONLY) {
-            fprintf(stderr, "b_load_symbols: warning: file is fancy, symbols might be missing\n");
+            //fprintf(stderr, "b_load_symbols: warning: file is fancy, symbols might be missing\n");
         }
     }
     if(binary->symtab && binary->dysymtab) {
@@ -209,19 +209,17 @@ void b_prange_load_macho(struct binary *binary, prange_t pr, const char *name) {
             die("thin file doesn't have the right architecture");
         }
         fat_offset = 0;
-    } else if(magic == FAT_MAGIC) {
-        if(desired_cpusubtype == 0) {
-            die("fat, but we don't even know what we want (desired_cpusubtype == 0)");
-        }
+    } else if(magic == FAT_CIGAM) {
         struct fat_header *fathdr = pr.start;
         struct fat_arch *arch = (void *)(fathdr + 1);
-        uint32_t nfat_arch = fathdr->nfat_arch;
+        uint32_t nfat_arch = swap32(fathdr->nfat_arch);
         if(sizeof(struct fat_header) + nfat_arch * sizeof(struct fat_arch) >= 0x1000) {
             die("fat header is too big");
         }
+        mach_hdr = NULL;
         while(nfat_arch--) {
-            if(arch->cputype == desired_cputype && (arch->cpusubtype == 0 || arch->cpusubtype == desired_cpusubtype)) {
-                fat_offset = arch->offset;
+            if((int) swap32(arch->cputype) == desired_cputype && (arch->cpusubtype == 0 || desired_cpusubtype == 0 || (int) swap32(arch->cpusubtype) == desired_cpusubtype)) {
+                fat_offset = swap32(arch->offset);
                 if(fat_offset + 0x1000 >= pr.size) {
                     die("truncated (couldn't seek to fat offset %u)", fat_offset);
                 }
@@ -229,6 +227,11 @@ void b_prange_load_macho(struct binary *binary, prange_t pr, const char *name) {
                 break;
             }
             arch++;
+        }
+        if(!mach_hdr) {
+            die("no compatible architectures in fat file");
+        } else if(desired_cpusubtype == 0) {
+            fprintf(stderr, "b_prange_load_macho: warning: fat, but out of apathy we just picked the first architecture with cputype %d, whose subtype was %d\n", desired_cputype, mach_hdr->cpusubtype);
         }
     } else {
         die("(%08x) what is this I don't even", magic);
@@ -363,21 +366,6 @@ void b_macho_store(struct binary *binary, const char *path) {
     }
     close(fd);
 #undef _arg
-}
-
-bool b_is_armv7(struct binary *binary) {
-    bool result;
-    switch(binary->actual_cpusubtype) {
-    case 6:
-        result = false;
-        break;
-    case 9:
-        result = true;
-        break;
-    default:
-        die("unknown cpusubtype %d", binary->actual_cpusubtype);
-    }
-    return result;
 }
 
 uint32_t b_allocate_from_macho_fd(int fd) {
@@ -601,7 +589,7 @@ range_t b_nth_segment(const struct binary *binary, unsigned int n) {
             }
         }
     }
-    return (range_t) {binary, 0, 0};
+    return (range_t) {NULL, 0, 0};
 }
 
 

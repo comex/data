@@ -1,6 +1,5 @@
 #include "common.h"
 #include <sys/stat.h>
-#include <arpa/inet.h>
 #include <sys/time.h>
 #include <sys/proc.h>
 #include <sys/sysctl.h>
@@ -113,5 +112,5 @@ uint32_t parse_hex_uint32(char *string) {
     uint32_t u;
     memcpy(&u, pr.start, pr.size);
     free(pr.start);
-    return ntohl(u);
+    return swap32(u);
 }

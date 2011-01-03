@@ -63,9 +63,9 @@ prange_t decrypt_and_decompress(uint32_t key_bits, prange_t key, prange_t iv, pr
     if(!(ch->signature == 0x706d6f63 && ch->compression_type == 0x73737a6c)) {
         die("nonsense decrypted result is not complzss (%x %x)", ch->signature, ch->compression_type);
     }
-    uint32_t length_compressed = ntohl(ch->length_compressed);
-    uint32_t length_uncompressed = ntohl(ch->length_uncompressed);
-    uint32_t checksum = ntohl(ch->checksum);
+    uint32_t length_compressed = swap32(ch->length_compressed);
+    uint32_t length_uncompressed = swap32(ch->length_uncompressed);
+    uint32_t checksum = swap32(ch->checksum);
     if((outbuf_len - sizeof(struct comp_header)) < length_compressed) {
         die("too big length_compressed %x > %lx", length_compressed, outbuf_len - sizeof(struct comp_header));
     }

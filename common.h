@@ -2,6 +2,8 @@
 
 //#define PROFILING
 
+#define swap32 __builtin_bswap32
+
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>

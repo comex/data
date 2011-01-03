@@ -77,7 +77,4 @@ r(16)
 r(32)
 r(64)
 
-__attribute__((const)) bool b_is_armv7(struct binary *binary);
-
-
 __attribute__((const)) prange_t x_prange(const struct binary *binary, addr_t addrbase, addr_t offbase, addr_t diff, size_t size);
