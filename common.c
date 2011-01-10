@@ -1,6 +1,5 @@
 #include "common.h"
 #include <sys/stat.h>
-#include <arpa/inet.h>
 #include <sys/time.h>
 #include <sys/proc.h>
 #include <sys/sysctl.h>
@@ -79,12 +78,15 @@ prange_t load_file(const char *filename, bool rw, mode_t *mode) {
 
 prange_t load_fd(int fd, bool rw) {
     off_t end = lseek(fd, 0, SEEK_END);
+    if(end == 0) {
+        fprintf(stderr, "load_fd: warning: mapping an empty file\n");
+    }
     if(sizeof(off_t) > sizeof(size_t) && end > (off_t) SIZE_MAX) {
         die("too big: %lld", (long long) end);
     }
     void *buf = mmap(NULL, (size_t) end, PROT_READ | (rw ? PROT_WRITE : 0), MAP_PRIVATE, fd, 0);
     if(buf == MAP_FAILED) {
-        edie("could not mmap buf");
+        edie("could not mmap buf (end=%zd)", (size_t) end);
     }
     return (prange_t) {buf, (size_t) end};
 }
@@ -110,5 +112,5 @@ uint32_t parse_hex_uint32(char *string) {
     uint32_t u;
     memcpy(&u, pr.start, pr.size);
     free(pr.start);
-    return ntohl(u);
+    return swap32(u);
 }

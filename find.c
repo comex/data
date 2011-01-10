@@ -137,24 +137,6 @@ addr_t find_int32(range_t range, uint32_t number, bool must_find) {
     }
 }
 
-uintptr_t preplace32_a(prange_t range, uint32_t a) {
-    for(uintptr_t addr = (uintptr_t)range.start; addr + sizeof(uint32_t) <= (uintptr_t)range.start + range.size; addr++) {
-        if(*(uint32_t *)addr == a) {
-            return addr;
-        }
-    }
-    //fprintf(stderr, "preplace32: warning: didn't find %08x anywhere\n", a);
-    return 0;
-}
-
-void preplace32_b(prange_t range, uintptr_t start, uint32_t a, uint32_t b) {
-    for(uintptr_t addr = start; addr + sizeof(uint32_t) <= (uintptr_t)range.start + range.size; addr++) {
-        if(*(uint32_t *)addr == a) {
-            *(uint32_t *)addr = b;
-        }
-    }
-}
-
 addr_t find_bof(range_t range, addr_t eof, bool is_thumb) {
     // push {..., lr}; add r7, sp, ...
     addr_t addr = (eof - 1) & ~1;
@@ -187,7 +169,7 @@ addr_t find_bof(range_t range, addr_t eof, bool is_thumb) {
 }
 
 uint32_t resolve_ldr(struct binary *binary, addr_t addr) {
-    uint32_t val = read32(binary, addr & ~1); 
+    uint32_t val = b_read32(binary, addr & ~1); 
     addr_t target;
     if(addr & 1) {
         addr_t base = ((addr + 3) & ~3);
@@ -206,7 +188,7 @@ uint32_t resolve_ldr(struct binary *binary, addr_t addr) {
             die("weird ARM instruction %08x at %08x", val, addr);
         }
     }
-    return read32(binary, target);
+    return b_read32(binary, target);
 }
 
 addr_t find_bl(range_t *range) {
@@ -266,12 +248,15 @@ addr_t find_bl(range_t *range) {
     return baseaddr + diff;
 }
 
-addr_t b_dyldcache_find_anywhere(struct binary *binary, char *to_find, int align) {
+addr_t b_find_anywhere(struct binary *binary, char *to_find, int align, bool must_find) {
     range_t range;
-    for(int i = 0; (range = b_dyldcache_nth_segment(binary, i)).start; i++) {
+    for(int i = 0; (range = b_nth_segment(binary, i)).binary; i++) {
         addr_t result = find_data(range, to_find, align, false);
         if(result) return result;
     }
-    die("didn't find [%s] /anywhere/", to_find);
+    if(must_find) {
+        die("didn't find [%s] anywhere", to_find);
+    } else {
+        return 0;
+    }
 }
-

@@ -27,7 +27,7 @@ void b_macho_load_symbols(struct binary *binary) {
         } else if(cmd->cmd == LC_DYSYMTAB) {
             binary->dysymtab = (void *) cmd;
         } else if(cmd->cmd == LC_DYLD_INFO_ONLY) {
-            fprintf(stderr, "b_load_symbols: warning: file is fancy, symbols might be missing\n");
+            //fprintf(stderr, "b_load_symbols: warning: file is fancy, symbols might be missing\n");
         }
     }
     if(binary->symtab && binary->dysymtab) {
@@ -64,6 +64,7 @@ static void do_dyld_hdr(struct binary *binary) {
         die("insane mapping count: %u", binary->dyld_hdr->mappingCount);
     }
     binary->dyld_mapping_count = binary->dyld_hdr->mappingCount;
+    binary->dyld_mappings = (void *) ((char *)binary->dyld_hdr + binary->dyld_hdr->mappingOffset);
 }
 
 void b_load_dyldcache(struct binary *binary, const char *path, bool rw) {
@@ -74,6 +75,7 @@ void b_prange_load_dyldcache(struct binary *binary, prange_t pr, const char *nam
 #define _arg name
     binary->valid = true;
     binary->is_address_indexed = false;
+    binary->load_base = pr.start;
 
     if(pr.size < sizeof(*binary->dyld_hdr)) {
         die("truncated");
@@ -101,16 +103,6 @@ void b_load_running_dyldcache(struct binary *binary, void *baseaddr) {
     binary->load_base = NULL;
     binary->limit = NULL;
     do_dyld_hdr(binary);
-    binary->dyld_mappings = (void *) ((char *)binary->dyld_hdr + binary->dyld_hdr->mappingOffset);
-}
-
-range_t b_dyldcache_nth_segment(const struct binary *binary, unsigned int n) {
-    if(n < binary->dyld_mapping_count) {
-        ((struct binary *) binary)->last_sfm = &binary->dyld_mappings[n];
-        return (range_t) {binary, (addr_t) binary->dyld_mappings[n].sfm_address, (size_t) binary->dyld_mappings[n].sfm_size};
-    } else {
-        return (range_t) {binary, 0, 0};
-    }
 }
 
 void b_dyldcache_load_macho(struct binary *binary, const char *filename) {
@@ -217,19 +209,17 @@ void b_prange_load_macho(struct binary *binary, prange_t pr, const char *name) {
             die("thin file doesn't have the right architecture");
         }
         fat_offset = 0;
-    } else if(magic == FAT_MAGIC) {
-        if(desired_cpusubtype == 0) {
-            die("fat, but we don't even know what we want (desired_cpusubtype == 0)");
-        }
+    } else if(magic == FAT_CIGAM) {
         struct fat_header *fathdr = pr.start;
         struct fat_arch *arch = (void *)(fathdr + 1);
-        uint32_t nfat_arch = fathdr->nfat_arch;
+        uint32_t nfat_arch = swap32(fathdr->nfat_arch);
         if(sizeof(struct fat_header) + nfat_arch * sizeof(struct fat_arch) >= 0x1000) {
             die("fat header is too big");
         }
+        mach_hdr = NULL;
         while(nfat_arch--) {
-            if(arch->cputype == desired_cputype && (arch->cpusubtype == 0 || arch->cpusubtype == desired_cpusubtype)) {
-                fat_offset = arch->offset;
+            if((int) swap32(arch->cputype) == desired_cputype && (arch->cpusubtype == 0 || desired_cpusubtype == 0 || (int) swap32(arch->cpusubtype) == desired_cpusubtype)) {
+                fat_offset = swap32(arch->offset);
                 if(fat_offset + 0x1000 >= pr.size) {
                     die("truncated (couldn't seek to fat offset %u)", fat_offset);
                 }
@@ -237,6 +227,11 @@ void b_prange_load_macho(struct binary *binary, prange_t pr, const char *name) {
                 break;
             }
             arch++;
+        }
+        if(!mach_hdr) {
+            die("no compatible architectures in fat file");
+        } else if(desired_cpusubtype == 0) {
+            fprintf(stderr, "b_prange_load_macho: warning: fat, but out of apathy we just picked the first architecture with cputype %d, whose subtype was %d\n", desired_cputype, mach_hdr->cpusubtype);
         }
     } else {
         die("(%08x) what is this I don't even", magic);
@@ -371,21 +366,6 @@ void b_macho_store(struct binary *binary, const char *path) {
     }
     close(fd);
 #undef _arg
-}
-
-bool b_is_armv7(struct binary *binary) {
-    bool result;
-    switch(binary->actual_cpusubtype) {
-    case 6:
-        result = false;
-        break;
-    case 9:
-        result = true;
-        break;
-    default:
-        die("unknown cpusubtype %d", binary->actual_cpusubtype);
-    }
-    return result;
 }
 
 uint32_t b_allocate_from_macho_fd(int fd) {
@@ -591,6 +571,29 @@ void b_inject_into_macho_fd(const struct binary *binary, int fd) {
 
     munmap(hdr, 0x1000);
 }
+
+range_t b_nth_segment(const struct binary *binary, unsigned int n) {
+    if(binary->dyld_hdr) {
+        if(n < binary->dyld_mapping_count) {
+            ((struct binary *) binary)->last_sfm = &binary->dyld_mappings[n];
+            return (range_t) {binary, (addr_t) binary->dyld_mappings[n].sfm_address, (size_t) binary->dyld_mappings[n].sfm_size};
+        }
+    } else {
+        CMD_ITERATE(binary->mach_hdr, cmd) {
+            if(cmd->cmd == LC_SEGMENT) {
+                struct segment_command *seg = (void *) cmd;
+                if(seg->filesize == 0) continue;
+                if(n-- == 0) {
+                    return (range_t) {binary, seg->vmaddr, seg->filesize};
+                }
+            }
+        }
+    }
+    return (range_t) {NULL, 0, 0};
+}
+
+
+// this should not be here, obviously
 
 static addr_t find_vm_pageout(const struct binary *binary) {
     static const struct binary *last_binary;

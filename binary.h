@@ -49,7 +49,6 @@ void b_init(struct binary *binary);
 void b_load_dyldcache(struct binary *binary, const char *path, bool rw);
 void b_prange_load_dyldcache(struct binary *binary, prange_t range, const char *name);
 void b_load_running_dyldcache(struct binary *binary, void *baseaddr);
-range_t b_dyldcache_nth_segment(const struct binary *binary, unsigned int n);
 void b_dyldcache_load_macho(struct binary *binary, const char *filename);
 
 void b_macho_load_symbols(struct binary *binary);
@@ -60,6 +59,7 @@ void b_prange_load_macho(struct binary *binary, prange_t range, const char *name
 __attribute__((pure)) range_t b_macho_segrange(const struct binary *binary, const char *segname);
 void b_macho_store(struct binary *binary, const char *path);
 
+range_t b_nth_segment(const struct binary *binary, unsigned int n);
 addr_t b_sym(const struct binary *binary, const char *name, bool to_execute);
 
 uint32_t b_allocate_from_macho_fd(int fd);
@@ -68,7 +68,7 @@ void b_inject_into_macho_fd(const struct binary *binary, int fd);
 #define CMD_ITERATE(hdr, cmd) for(struct load_command *cmd = (void *)((hdr) + 1), *end = (void *)((char *)(hdr) + (hdr)->sizeofcmds); cmd; cmd = (cmd->cmdsize > 0 && cmd->cmdsize < (uint32_t)((char *)end - (char *)cmd)) ? (void *)((char *)cmd + cmd->cmdsize) : NULL)
 
 #define r(sz) \
-static inline uint##sz##_t read##sz(const struct binary *binary, addr_t addr) { \
+static inline uint##sz##_t b_read##sz(const struct binary *binary, addr_t addr) { \
     return *(uint##sz##_t *)(rangeconv((range_t) {binary, addr, sz/8}).start); \
 }
 
@@ -76,8 +76,5 @@ r(8)
 r(16)
 r(32)
 r(64)
-
-__attribute__((const)) bool b_is_armv7(struct binary *binary);
-
 
 __attribute__((const)) prange_t x_prange(const struct binary *binary, addr_t addrbase, addr_t offbase, addr_t diff, size_t size);
