@@ -5,7 +5,6 @@
 #include "fat.h"
 #include "dyld_cache_format.h"
 #include "find.h"
-#include <unistd.h>
 
 const int desired_cputype = 12; // ARM
 const int desired_cpusubtype = 0; // v7=9, v6=6
