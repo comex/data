@@ -1,4 +1,5 @@
 #pragma once
+#define _XOPEN_SOURCE 500
 
 //#define PROFILING
 
