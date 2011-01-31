@@ -31,14 +31,14 @@ uint32_t b_lookup_sym(const struct binary *binary, char *sym) {
         }
         return bl;
     }
-    if(sym[0] == '$' && sym[1] == '_') {
+    if(sym[0] == '$' && ((sym[1] == 't' && sym[2] == '_') || sym[1] == '_')) {
         // lol...
         char *to_find = malloc(strlen(sym)+1);
         char *p = to_find;
         while(1) {
             char c = *sym++;
             switch(c) {
-            case '$': c = '-'; break;
+            case '$': if(*sym == 't') { c = '+'; sym++; } else { c = '-'; } break;
             case '_': c = ' '; break;
             case 'X': c = '.'; break;
             }
