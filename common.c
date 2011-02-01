@@ -1,7 +1,8 @@
 #include "common.h"
 #include <sys/stat.h>
 #include <sys/time.h>
-#include <sys/sysctl.h>
+#include <sys/types.h>
+#include <sys/mman.h>
 
 prange_t pdup(prange_t range) {
     void *buf = malloc(range.size);
