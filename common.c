@@ -19,7 +19,7 @@ void punmap(prange_t range) {
 }
 
 void check_range_has_addr(range_t range, addr_t addr) {
-    if(addr < range.start || addr >= (range.start | range.size)) {
+    if(addr < range.start || addr >= (range.start + range.size)) {
         die("bad address 0x%08x (not in range %08x-%08x)", addr, range.start, range.start + (uint32_t) range.size);
     }
 }
