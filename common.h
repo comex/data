@@ -25,7 +25,7 @@ __attribute__((unused)) static const char *_arg = MAP_FAILED;
     fprintf(stderr, "%s: ", __func__); \
     if(_arg != MAP_FAILED) fprintf(stderr, "%s: ", _arg); \
     fprintf(stderr, fmt "\n", ##args); \
-    abort(); \
+    exit(1); \
 } while(0)
 #define edie(fmt, args...) die(fmt ": %s", ##args, strerror(errno))
 

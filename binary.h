@@ -37,12 +37,10 @@ struct binary {
 //__attribute__((const))
 //prange_t rangeconv_checkof(range_t range);
 
-// address -> buffer
 __attribute__((const)) prange_t rangeconv(range_t range);
-// offset -> buffer
 __attribute__((const)) prange_t rangeconv_off(range_t range);
-// address -> offset
 __attribute__((const)) range_t range_to_off_range(range_t range);
+__attribute__((const)) range_t off_range_to_range(range_t range);
 
 void b_init(struct binary *binary);
 
@@ -64,7 +62,7 @@ addr_t b_sym(const struct binary *binary, const char *name, bool to_execute, boo
 addr_t b_private_sym(const struct binary *binary, const char *name, bool to_execute, bool must_find);
 
 uint32_t b_allocate_from_macho_fd(int fd);
-void b_inject_into_macho_fd(const struct binary *binary, int fd);
+void b_inject_into_macho_fd(const struct binary *binary, int fd, addr_t (*find_hack_func)(const struct binary *binary));
 
 #define CMD_ITERATE(hdr, cmd) for(struct load_command *cmd = (void *)((hdr) + 1), *end = (void *)((char *)(hdr) + (hdr)->sizeofcmds); cmd; cmd = (cmd->cmdsize > 0 && cmd->cmdsize < (uint32_t)((char *)end - (char *)cmd)) ? (void *)((char *)cmd + cmd->cmdsize) : NULL)
 
@@ -77,5 +75,3 @@ r(8)
 r(16)
 r(32)
 r(64)
-
-__attribute__((const)) prange_t x_prange(const struct binary *binary, addr_t addrbase, addr_t offbase, addr_t diff, size_t size);

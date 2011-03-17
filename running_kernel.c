@@ -123,10 +123,11 @@ void b_inject_into_running_kernel(const struct binary *to_load, uint32_t sysent)
     CMD_ITERATE(to_load->mach_hdr, cmd) {
         if(cmd->cmd == LC_SEGMENT) {
             struct segment_command *seg = (void *) cmd;
+            ((struct binary *) to_load)->last_seg = seg;
             uint32_t fs = seg->filesize;
             if(seg->vmsize < fs) fs = seg->vmsize;
             // if prebound, slide = 0
-            vm_offset_t of = (vm_offset_t) x_prange(to_load, seg->vmaddr, seg->fileoff, 0, seg->filesize).start;
+            vm_offset_t of = (vm_offset_t) rangeconv((range_t) {to_load, seg->vmaddr, seg->filesize}).start;
             vm_address_t ad = seg->vmaddr;
             while(fs > 0) {
                 // complete headbang.

@@ -78,19 +78,19 @@ void b_prange_load_dyldcache(struct binary *binary, prange_t pr, const char *nam
     binary->load_base = pr.start;
 
     if(pr.size < sizeof(*binary->dyld_hdr)) {
-        die("truncated");
+        die("truncated (no room for dyld cache header)");
     }
     binary->dyld_hdr = pr.start;
     do_dyld_hdr(binary);
 
-    if(binary->dyld_hdr->mappingOffset >= pr.size || binary->dyld_hdr->mappingOffset + (binary->dyld_mapping_count * sizeof(struct shared_file_mapping_np)) > pr.size) {
-        die("truncated");
+    if(binary->dyld_hdr->mappingOffset >= pr.size || (binary->dyld_mapping_count * sizeof(struct shared_file_mapping_np)) > pr.size - binary->dyld_hdr->mappingOffset) {
+        die("truncated (no room for dyld cache mappings)");
     }
     
     for(unsigned int i = 0; i < binary->dyld_mapping_count; i++) {
         struct shared_file_mapping_np *mapping = &binary->dyld_mappings[i];
-        if(mapping->sfm_file_offset >= pr.size || mapping->sfm_file_offset + mapping->sfm_size > pr.size) {
-            die("truncated");
+        if(mapping->sfm_file_offset >= pr.size || mapping->sfm_size > pr.size - mapping->sfm_file_offset >mapping->sfm_file_offset) {
+            die("truncated (no room for dyld cache mapping %d)", i);
         }
     }
 #undef _arg
@@ -124,11 +124,12 @@ void b_dyldcache_load_macho(struct binary *binary, const char *filename) {
     b_macho_load_symbols(binary);
 }
 
-#define DEFINE_RANGECONV(rettype, name, intro, dfield, mfield, retfunc) \
-rettype name(range_t range) { \
+#define DEFINE_RANGECONV_(name, intro, dfield, mfield, retfunc) \
+typeof(retfunc(0, 0, 0, 0, 0)) name(range_t range) { \
+    if(range.start > range.start + range.size) goto err; \
     if(range.binary->dyld_hdr) { \
         struct shared_file_mapping_np *sfm = range.binary->last_sfm; \
-        if(sfm && sfm->dfield <= range.start && range.start <= range.start + range.size && range.start + range.size <= sfm->dfield + sfm->sfm_size) { \
+        if(sfm && sfm->dfield <= range.start && range.start + range.size <= sfm->dfield + sfm->sfm_size) { \
             goto dok; \
         } \
         sfm = range.binary->dyld_mappings; \
@@ -145,13 +146,13 @@ rettype name(range_t range) { \
         return retfunc(range.binary, sfm->sfm_address, sfm->sfm_file_offset, range.start - sfm->dfield, range.size); \
     } else if(range.binary->mach_hdr) { \
         struct segment_command *seg = range.binary->last_seg; \
-        if(seg && seg->mfield <= range.start && range.start <= range.start + range.size && range.start + range.size <= seg->mfield + seg->filesize) { \
+        if(seg && seg->mfield <= range.start && range.start + range.size <= seg->mfield + seg->filesize) { \
             goto mok; \
         } \
         CMD_ITERATE(range.binary->mach_hdr, cmd) { \
             if(cmd->cmd == LC_SEGMENT) { \
                 seg = (void *) cmd; \
-                if(seg->mfield <= range.start && range.start <= range.start + range.size && range.start + range.size <= seg->mfield + seg->filesize) { \
+                if(seg->mfield <= range.start && range.start + range.size <= seg->mfield + seg->filesize) { \
                     ((struct binary *) (range.binary))->last_seg = seg; \
                     goto mok; \
                 } \
@@ -166,10 +167,15 @@ rettype name(range_t range) { \
     err: \
     die(intro " (%08x, %zx) not valid", range.start, range.size); \
 }
+#define DEFINE_RANGECONV(name, intro, w) DEFINE_RANGECONV_(name, intro, w)
 
-__attribute__((const))
+
+#define w_range "range", sfm_address, vmaddr
+#define w_off_range "offset range", sfm_file_offset, fileoff
+
 inline prange_t x_prange(const struct binary *binary, addr_t addrbase, addr_t offbase, addr_t diff, size_t size) {
     return (prange_t) {(char *)binary->load_base + (binary->is_address_indexed ? addrbase : offbase) + diff, size};
+    
 }
 
 __attribute__((const))
@@ -185,19 +191,32 @@ static inline range_t x_off_range(const struct binary *binary, addr_t addrbase, 
     return (range_t) {binary, offbase + diff, size};
 }
 
-DEFINE_RANGECONV(prange_t, rangeconv, "range", sfm_address, vmaddr, x_prange)
-DEFINE_RANGECONV(prange_t, rangeconv_off, "offset range", sfm_file_offset, fileoff, x_prange)
-DEFINE_RANGECONV(range_t, range_to_off_range, "range", sfm_address, vmaddr, x_off_range)
-DEFINE_RANGECONV(range_t, off_range_to_range, "offset range", sfm_file_offset, fileoff, x_range)
 
+DEFINE_RANGECONV(rangeconv, w_range, x_prange)
+static inline DEFINE_RANGECONV(rangeconv_off_helper, w_off_range, x_prange)
+DEFINE_RANGECONV(range_to_off_range, w_range, x_off_range)
+DEFINE_RANGECONV(off_range_to_range, w_off_range, x_range)
+
+prange_t rangeconv_off(range_t range) {
+    if(!range.binary->is_address_indexed) {
+        char *base = (char *) range.binary->load_base + range.start;
+        if(range.size <= (size_t) ((char *) range.binary->limit - base)) {
+            return (prange_t) {base, range.size};       
+        } else {
+            die("offset range (%08x, %zx) not valid", range.start, range.size);
+        }
+    } else {
+        return rangeconv_off_helper(range);
+    }
+}
 
 void b_prange_load_macho(struct binary *binary, prange_t pr, const char *name) {
 #define _arg name
     binary->valid = true;
     binary->is_address_indexed = false;
 
-    if(pr.size < 0x1000) {
-        die("truncated");
+    if(pr.size < sizeof(struct mach_header)) {
+        die("truncated (no room for mach header)");
     }
     
     struct mach_header *mach_hdr;
@@ -251,7 +270,7 @@ void b_prange_load_macho(struct binary *binary, prange_t pr, const char *name) {
         if(cmd->cmd == LC_SEGMENT) {
             const struct segment_command *scmd = (void *) cmd;
             if(scmd->fileoff >= pr.size || scmd->fileoff + scmd->filesize > pr.size) {
-                die("truncated"); 
+                die("truncated (no room for mach-o segment)");
             }
         }
     }
@@ -288,27 +307,6 @@ range_t b_macho_segrange(const struct binary *binary, const char *segname) {
         }
     }
     die("no such segment %s", segname);
-}
-
-#define DEFINE_MACHO_RANGECONV(name, field, intro) \
-prange_t name(range_t range) { \
-    struct segment_command *seg = range.binary->last_seg; \
-    if(seg && seg->field <= range.start && seg->filesize - (seg->field - range.start) >= range.size) { \
-        goto ok; \
-    } \
-    CMD_ITERATE(range.binary->mach_hdr, cmd) { \
-        if(cmd->cmd == LC_SEGMENT) { \
-            seg = (void *) cmd; \
-            if(seg->field <= range.start && seg->filesize - (seg->field - range.start) >= range.size) { \
-                /* ditto */ \
-                ((struct binary *) (range.binary))->last_seg = seg; \
-                goto ok; \
-            } \
-        } \
-    } \
-    die(intro " (%08x, %zx) not valid", range.start, range.size); \
-    ok: \
-    return (prange_t) {b_addrconv_unsafe(range.binary, range.start), range.size}; \
 }
 
 // return value is |1 if to_execute is set and it is a thumb symbol
@@ -427,9 +425,7 @@ uint32_t b_allocate_from_macho_fd(int fd) {
 }
 
 
-static addr_t find_hack_func(const struct binary *binary);
-
-void b_inject_into_macho_fd(const struct binary *binary, int fd) {
+void b_inject_into_macho_fd(const struct binary *binary, int fd, addr_t (*find_hack_func)(const struct binary *binary)) {
 
     off_t seg_off = lseek(fd, 0, SEEK_END);
     struct mach_header *hdr = mmap(NULL, 0x1000, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
@@ -621,28 +617,3 @@ range_t b_nth_segment(const struct binary *binary, unsigned int n) {
     }
     return (range_t) {NULL, 0, 0};
 }
-
-
-// this should not be here, obviously
-
-static addr_t find_hack_func(const struct binary *binary) {
-    return b_sym(binary, "_IOFindBSDRoot", true, true); 
-}
-#if 0
-static addr_t find_vm_pageout(const struct binary *binary) {
-    static const struct binary *last_binary;
-    static addr_t last_vm_pageout;
-    
-    if(last_binary != binary) {
-        last_binary = binary;
-
-        range_t text = b_macho_segrange(binary, "__TEXT");
-        const char *string = "\"vm_pageout_iothread_external";
-        addr_t eof = find_int32(text, find_bytes(text, string, strlen(string), 1, true), true);
-        printf("eof=%08x\n", eof);
-        last_vm_pageout = find_bof(text, eof, true) | 1;
-    }
-
-    return last_vm_pageout;
-}
-#endif
