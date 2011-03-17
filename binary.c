@@ -312,7 +312,7 @@ prange_t name(range_t range) { \
 }
 
 // return value is |1 if to_execute is set and it is a thumb symbol
-addr_t b_sym(const struct binary *binary, const char *name, bool to_execute) {
+addr_t b_sym(const struct binary *binary, const char *name, bool to_execute, bool must_find) {
     if(!binary->ext_symtab) {
         die("we wanted %s but there is no symbol table", name);
     }
@@ -338,10 +338,13 @@ addr_t b_sym(const struct binary *binary, const char *name, bool to_execute) {
             n--;
         }
     }
-    die("symbol %s not found", name);
+    if(must_find) {
+        die("symbol %s not found", name);
+    }
+    return 0;
 }
 
-addr_t b_private_sym(const struct binary *binary, const char *name, bool to_execute) {
+addr_t b_private_sym(const struct binary *binary, const char *name, bool to_execute, bool must_find) {
     if(!binary->symtab) {
         die("we wanted %s but there is no symbol table", name);
     }
@@ -360,7 +363,10 @@ addr_t b_private_sym(const struct binary *binary, const char *name, bool to_exec
             return result;
         }
     }
-    die("symbol %s not found", name);
+    if(must_find) {
+        die("symbol %s not found", name);
+    }
+    return 0;
 }
 
 void b_macho_store(struct binary *binary, const char *path) {
@@ -421,7 +427,7 @@ uint32_t b_allocate_from_macho_fd(int fd) {
 }
 
 
-static addr_t find_vm_pageout(const struct binary *binary);
+static addr_t find_hack_func(const struct binary *binary);
 
 void b_inject_into_macho_fd(const struct binary *binary, int fd) {
 
@@ -490,9 +496,9 @@ void b_inject_into_macho_fd(const struct binary *binary, int fd) {
     // now deal with the init pointers
     if(num_init_ptrs > 0) {
         if(num_init_ptrs == 1) {
-            fprintf(stderr, "note: 1 constructor function is present; hacking vm_pageout\n");
+            fprintf(stderr, "note: 1 constructor function is present; hacking IOFindBSDRoot\n");
         } else {
-            fprintf(stderr, "note: %d constructor functions are present; hacking vm_pageout\n", num_init_ptrs);
+            fprintf(stderr, "note: %d constructor functions are present; hacking IOFindBSDRoot\n", num_init_ptrs);
         }
         
         // ldr r3, [pc]; bx r3
@@ -514,17 +520,17 @@ void b_inject_into_macho_fd(const struct binary *binary, int fd) {
         struct binary kern;
         b_init(&kern);
         b_fd_load_macho(&kern, fd, false);
-        addr_t vm_pageout = find_vm_pageout(&kern);
-        fprintf(stderr, "vm_pageout = %08x\n", vm_pageout);
-        prange_t vm_pageout_pr = rangeconv((range_t) {&kern, vm_pageout & ~1, bytes_to_move});
-        range_t vm_pageout_off_range = range_to_off_range((range_t) {&kern, vm_pageout & ~1, sizeof(part0) + sizeof(uint32_t)});
+        addr_t hack_func = find_hack_func(&kern);
+        fprintf(stderr, "hack_func = %08x\n", hack_func);
+        prange_t hack_func_pr = rangeconv((range_t) {&kern, hack_func & ~1, bytes_to_move});
+        range_t hack_func_off_range = range_to_off_range((range_t) {&kern, hack_func & ~1, sizeof(part0) + sizeof(uint32_t)});
 
         // allocate a new segment for the stub
 
         uint32_t stub_size = (sizeof(part1) + 4) * num_init_ptrs + sizeof(part2) + bytes_to_move + sizeof(part3) + 4;
 
-        if(!(vm_pageout & 1)) {
-            die("vm_pageout is not thumb");
+        if(!(hack_func & 1)) {
+            die("hack func 0x%x is not thumb", hack_func);
         }
 
 
@@ -566,7 +572,7 @@ void b_inject_into_macho_fd(const struct binary *binary, int fd) {
             edie("couldn't write part2");
         }
 
-        if((size_t) write(fd, vm_pageout_pr.start, bytes_to_move) != bytes_to_move) {
+        if((size_t) write(fd, hack_func_pr.start, bytes_to_move) != bytes_to_move) {
             edie("couldn't write moved bytes");
         }
 
@@ -574,13 +580,13 @@ void b_inject_into_macho_fd(const struct binary *binary, int fd) {
             edie("couldn't write part3");
         }
 
-        uint32_t new_addr = vm_pageout + bytes_to_move;
+        uint32_t new_addr = hack_func + bytes_to_move;
 
         if(write(fd, &new_addr, sizeof(new_addr)) != sizeof(new_addr)) {
             edie("couldn't write new_addr");
         }
         
-        lseek(fd, vm_pageout_off_range.start, SEEK_SET);
+        lseek(fd, hack_func_off_range.start, SEEK_SET);
 
         if(write(fd, part0, sizeof(part0)) != sizeof(part0)) {
             edie("couldn't write part0");
@@ -619,6 +625,10 @@ range_t b_nth_segment(const struct binary *binary, unsigned int n) {
 
 // this should not be here, obviously
 
+static addr_t find_hack_func(const struct binary *binary) {
+    return b_sym(binary, "_IOFindBSDRoot", true, true); 
+}
+#if 0
 static addr_t find_vm_pageout(const struct binary *binary) {
     static const struct binary *last_binary;
     static addr_t last_vm_pageout;
@@ -635,3 +645,4 @@ static addr_t find_vm_pageout(const struct binary *binary) {
 
     return last_vm_pageout;
 }
+#endif

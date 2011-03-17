@@ -4,6 +4,7 @@
 #include "nlist.h"
 #include "reloc.h"
 #include <assert.h>
+#include <ctype.h>
 
 uint32_t b_find_sysent(const struct binary *binary) {
     static const struct binary *last_binary; static uint32_t last_sysent;
@@ -15,22 +16,12 @@ uint32_t b_find_sysent(const struct binary *binary) {
 }
 
 // gigantic hack
-uint32_t b_lookup_sym(const struct binary *binary, char *sym) {
+uint32_t b_lookup_sym(const struct binary *binary, const char *sym, bool must_find) {
     if(!strcmp(sym, "_sysent")) {
         return b_find_sysent(binary);
     }
 
-    if(sym[0] == '$' && sym[1] == 'b' && sym[2] == 'l' && sym[4] == '_') {
-        uint32_t func = b_sym(binary, sym + 5, true);
-        range_t range = (range_t) {binary, func, 0x1000};
-        int number = sym[3] - '0';
-        uint32_t bl = 0;
-        while(number--) bl = find_bl(&range);
-        if(!bl) {
-            die("no bl for %s", sym);
-        }
-        return bl;
-    }
+    // $t_XX_XX -> find "+ XX XX" in TEXT
     if(sym[0] == '$' && ((sym[1] == 't' && sym[2] == '_') || sym[1] == '_')) {
         // lol...
         char *to_find = malloc(strlen(sym)+1);
@@ -45,11 +36,50 @@ uint32_t b_lookup_sym(const struct binary *binary, char *sym) {
             *p++ = c;
             if(!c) break;
         }
-        uint32_t result = find_data(b_macho_segrange(binary, "__TEXT"), to_find, 0, true);
+        uint32_t result = find_data(b_macho_segrange(binary, "__TEXT"), to_find, 0, must_find);
         free(to_find);
         return result;
     }
-    return b_sym(binary, sym, true);
+    
+    // $vt_<name> -> find offset to me from the corresponding vtable 
+    // ex: __ZN11OSMetaClass20getMetaClassWithNameEPK8OSSymbol
+    if(!strncmp(sym, "$vt_", 4)) {
+        sym += 4;
+        uint32_t the_func = b_lookup_sym(binary, sym, must_find);
+        if(!the_func) return 0;
+
+        // find the class, and construct its vtable name
+        while(*sym && !isnumber(*sym)) sym++;
+        char *class;
+        unsigned int len = (unsigned int) strtol(sym, &class, 10) + (class - sym);
+        assert(len > 0 && len <= strlen(sym));
+        char *vt_name = malloc(len + 6);
+        memcpy(vt_name, "__ZTV", 5);
+        memcpy(vt_name + 5, sym, len);
+        vt_name[len + 5] = 0;
+        
+        uint32_t vtable = b_sym(binary, vt_name, true, must_find);
+        if(!vtable) return 0;
+        uint32_t loc_in_vtable = find_int32((range_t) {binary, vtable, 0x1000}, the_func, true);
+
+        uint32_t diff = loc_in_vtable - (vtable + 8);
+
+        fprintf(stderr, "b_lookup_sym: vtable index %d for %s = %x - %x\n", diff/4, sym, loc_in_vtable, vtable + 8);
+        return diff;
+    }
+
+    return b_sym(binary, sym, true, must_find);
+}
+
+static uint32_t b_lookup_nlist(const struct binary *target, const struct binary *source, uint32_t symbolnum) {
+    struct nlist *nl = source->symtab + symbolnum;
+    bool weak = nl->n_desc & N_WEAK_REF;
+    const char *name = source->strtab + nl->n_un.n_strx;
+    uint32_t sym = b_lookup_sym(target, name, !weak);
+    if(weak && !sym) {
+        fprintf(stderr, "relocate_area: couldn't find weak symbol %s\n", name);
+    }
+    return sym;
 }
 
 static void relocate_area(const struct binary *binary, const struct binary *kern, uint32_t slide, uint32_t reloff, uint32_t nreloc) {
@@ -61,8 +91,7 @@ static void relocate_area(const struct binary *binary, const struct binary *kern
         uint32_t thing = /*reloc_base + */things[i].r_address;
         uint32_t *p = rangeconv((range_t) {binary, thing, 4}).start;
         if(things[i].r_extern) {
-            uint32_t sym = b_lookup_sym(kern, binary->strtab + binary->symtab[things[i].r_symbolnum].n_un.n_strx);
-            *p += sym;
+            *p += b_lookup_nlist(kern, binary, things[i].r_symbolnum);
         } else {
             // *shrug*
             *p += slide;
@@ -117,7 +146,7 @@ void b_relocate(struct binary *binary, const struct binary *kern, uint32_t slide
                             if(sym >= binary->nsyms) {
                                 die("sym too high: %u", sym);
                             }
-                            things[i] = b_lookup_sym(kern, binary->strtab + binary->symtab[sym].n_un.n_strx);
+                            things[i] = b_lookup_nlist(kern, binary, sym);
                         }
                     }
                     break;

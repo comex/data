@@ -60,8 +60,8 @@ __attribute__((pure)) range_t b_macho_segrange(const struct binary *binary, cons
 void b_macho_store(struct binary *binary, const char *path);
 
 range_t b_nth_segment(const struct binary *binary, unsigned int n);
-addr_t b_sym(const struct binary *binary, const char *name, bool to_execute);
-addr_t b_private_sym(const struct binary *binary, const char *name, bool to_execute);
+addr_t b_sym(const struct binary *binary, const char *name, bool to_execute, bool must_find);
+addr_t b_private_sym(const struct binary *binary, const char *name, bool to_execute, bool must_find);
 
 uint32_t b_allocate_from_macho_fd(int fd);
 void b_inject_into_macho_fd(const struct binary *binary, int fd);
