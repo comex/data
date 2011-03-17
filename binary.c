@@ -117,8 +117,10 @@ void b_dyldcache_load_macho(struct binary *binary, const char *filename) {
         }
         // we found it
         binary->mach_hdr = rangeconv((range_t) {binary, (addr_t) info->address, 0x1000}).start;
-        break;
+        goto ok;
     }
+    die("couldn't find %s in dyld cache", filename);
+    ok:
     b_macho_load_symbols(binary);
 }
 
@@ -334,6 +336,31 @@ addr_t b_sym(const struct binary *binary, const char *name, bool to_execute, boo
         } else if(cmp > 0) {
             base = pivot + 1; 
             n--;
+        }
+    }
+    if(must_find) {
+        die("symbol %s not found", name);
+    }
+    return 0;
+}
+
+addr_t b_private_sym(const struct binary *binary, const char *name, bool to_execute, bool must_find) {
+    if(!binary->symtab) {
+        die("we wanted %s but there is no symbol table", name);
+    }
+    const struct nlist *base = binary->symtab;
+    for(uint32_t i = 0; i < binary->nsyms; i++) {
+        const struct nlist *nl = base + i;
+        uint32_t strx = nl->n_un.n_strx;
+        if(strx >= binary->strsize) {
+            die("insane strx: %u", strx);
+        }
+        if(!strncmp(name, binary->strtab + strx, binary->strsize - strx)) {
+            addr_t result = nl->n_value;
+            if(to_execute && (nl->n_desc & N_ARM_THUMB_DEF)) {
+                result |= 1;
+            }
+            return result;
         }
     }
     if(must_find) {
