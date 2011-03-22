@@ -414,7 +414,6 @@ uint32_t b_allocate_from_macho_fd(int fd) {
 
 
 void b_inject_into_macho_fd(const struct binary *binary, int fd, addr_t (*find_hack_func)(const struct binary *binary)) {
-
     off_t seg_off = lseek(fd, 0, SEEK_END);
     struct mach_header *hdr = mmap(NULL, 0x1000, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
     if(hdr == MAP_FAILED) edie("could not mmap hdr in read/write mode");
@@ -480,9 +479,13 @@ void b_inject_into_macho_fd(const struct binary *binary, int fd, addr_t (*find_h
     // now deal with the init pointers
     if(num_init_ptrs > 0) {
         if(num_init_ptrs == 1) {
-            fprintf(stderr, "note: 1 constructor function is present; hacking IOFindBSDRoot\n");
+            fprintf(stderr, "note: 1 constructor function is present; using the hack_func\n");
         } else {
-            fprintf(stderr, "note: %d constructor functions are present; hacking IOFindBSDRoot\n", num_init_ptrs);
+            fprintf(stderr, "note: %d constructor functions are present; using the hack_func\n", num_init_ptrs);
+        }
+
+        if(!find_hack_func) {
+            die("...but there was no find_hack_func");
         }
         
         // ldr r3, [pc]; bx r3
