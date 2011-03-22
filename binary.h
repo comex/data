@@ -54,7 +54,7 @@ void b_load_macho(struct binary *binary, const char *path, bool rw);
 void b_fd_load_macho(struct binary *binary, int fd, bool rw);
 void b_prange_load_macho(struct binary *binary, prange_t range, const char *name);
 
-__attribute__((pure)) range_t b_macho_segrange(const struct binary *binary, const char *segname);
+__attribute__((const)) range_t b_macho_segrange(const struct binary *binary, const char *segname);
 void b_macho_store(struct binary *binary, const char *path);
 
 range_t b_nth_segment(const struct binary *binary, unsigned int n);
