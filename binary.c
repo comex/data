@@ -89,7 +89,7 @@ void b_prange_load_dyldcache(struct binary *binary, prange_t pr, const char *nam
     
     for(unsigned int i = 0; i < binary->dyld_mapping_count; i++) {
         struct shared_file_mapping_np *mapping = &binary->dyld_mappings[i];
-        if(mapping->sfm_file_offset >= pr.size || mapping->sfm_size > pr.size - mapping->sfm_file_offset >mapping->sfm_file_offset) {
+        if(mapping->sfm_file_offset >= pr.size || mapping->sfm_size > pr.size - mapping->sfm_file_offset) {
             die("truncated (no room for dyld cache mapping %d)", i);
         }
     }
@@ -124,17 +124,17 @@ void b_dyldcache_load_macho(struct binary *binary, const char *filename) {
     b_macho_load_symbols(binary);
 }
 
-#define DEFINE_RANGECONV_(name, intro, dfield, mfield, retfunc) \
-typeof(retfunc(0, 0, 0, 0, 0)) name(range_t range) { \
+#define DEFINE_RANGECONV_(rettype, name, intro, dfield, mfield, retfunc) \
+rettype name(range_t range) { \
     if(range.start > range.start + range.size) goto err; \
     if(range.binary->dyld_hdr) { \
         struct shared_file_mapping_np *sfm = range.binary->last_sfm; \
-        if(sfm && sfm->dfield <= range.start && range.start + range.size <= sfm->dfield + sfm->sfm_size) { \
+        if(sfm && sfm->dfield <= range.start && range.size <= sfm->dfield + sfm->sfm_size - range.start) { \
             goto dok; \
         } \
         sfm = range.binary->dyld_mappings; \
         for(uint32_t i = 0; i < range.binary->dyld_mapping_count; i++) { \
-            if(sfm->dfield <= range.start && range.start <= range.start + range.size && range.start + range.size <= sfm->dfield + sfm->sfm_size) { \
+            if(sfm->dfield <= range.start && range.size <= sfm->dfield + sfm->sfm_size - range.start) { \
                 /* ditto */ \
                 ((struct binary *) (range.binary))->last_sfm = sfm; \
                 goto dok; \
@@ -146,13 +146,13 @@ typeof(retfunc(0, 0, 0, 0, 0)) name(range_t range) { \
         return retfunc(range.binary, sfm->sfm_address, sfm->sfm_file_offset, range.start - sfm->dfield, range.size); \
     } else if(range.binary->mach_hdr) { \
         struct segment_command *seg = range.binary->last_seg; \
-        if(seg && seg->mfield <= range.start && range.start + range.size <= seg->mfield + seg->filesize) { \
+        if(seg && seg->mfield <= range.start && range.size <= seg->mfield + seg->filesize - range.start) { \
             goto mok; \
         } \
         CMD_ITERATE(range.binary->mach_hdr, cmd) { \
             if(cmd->cmd == LC_SEGMENT) { \
                 seg = (void *) cmd; \
-                if(seg->mfield <= range.start && range.start + range.size <= seg->mfield + seg->filesize) { \
+                if(seg->mfield <= range.start && range.size <= seg->mfield + seg->filesize - range.start) { \
                     ((struct binary *) (range.binary))->last_seg = seg; \
                     goto mok; \
                 } \
@@ -167,35 +167,23 @@ typeof(retfunc(0, 0, 0, 0, 0)) name(range_t range) { \
     err: \
     die(intro " (%08x, %zx) not valid", range.start, range.size); \
 }
-#define DEFINE_RANGECONV(name, intro, w) DEFINE_RANGECONV_(name, intro, w)
+#define DEFINE_RANGECONV(a, b, c, d) DEFINE_RANGECONV_(a, b, c, d)
 
 
 #define w_range "range", sfm_address, vmaddr
 #define w_off_range "offset range", sfm_file_offset, fileoff
 
-inline prange_t x_prange(const struct binary *binary, addr_t addrbase, addr_t offbase, addr_t diff, size_t size) {
-    return (prange_t) {(char *)binary->load_base + (binary->is_address_indexed ? addrbase : offbase) + diff, size};
-    
-}
+#define x_prange(binary, addrbase, offbase, diff, size) \
+    (prange_t) {(char *)(binary->load_base) + (binary->is_address_indexed ? addrbase : offbase) + diff, size}
+#define x_range(binary, addrbase, offbase, diff, size) \
+    (range_t) {binary, addrbase + diff, size}
+#define x_off_range(binary, addrbase, offbase, diff, size) \
+    (range_t) {binary, offbase + diff, size}
 
-__attribute__((const))
-static inline range_t x_range(const struct binary *binary, addr_t addrbase, addr_t offbase, addr_t diff, size_t size) {
-    (void) offbase;
-    return (range_t) {binary, addrbase + diff, size};
-}
-
-
-__attribute__((const))
-static inline range_t x_off_range(const struct binary *binary, addr_t addrbase, addr_t offbase, addr_t diff, size_t size) {
-    (void) addrbase;
-    return (range_t) {binary, offbase + diff, size};
-}
-
-
-DEFINE_RANGECONV(rangeconv, w_range, x_prange)
-static inline DEFINE_RANGECONV(rangeconv_off_helper, w_off_range, x_prange)
-DEFINE_RANGECONV(range_to_off_range, w_range, x_off_range)
-DEFINE_RANGECONV(off_range_to_range, w_off_range, x_range)
+DEFINE_RANGECONV(prange_t, rangeconv, w_range, x_prange)
+static inline DEFINE_RANGECONV(prange_t, rangeconv_off_helper, w_off_range, x_prange)
+DEFINE_RANGECONV(range_t, range_to_off_range, w_range, x_off_range)
+DEFINE_RANGECONV(range_t, off_range_to_range, w_off_range, x_range)
 
 prange_t rangeconv_off(range_t range) {
     if(!range.binary->is_address_indexed) {
