@@ -47,7 +47,7 @@ void b_init(struct binary *binary);
 void b_load_dyldcache(struct binary *binary, const char *path, bool rw);
 void b_prange_load_dyldcache(struct binary *binary, prange_t range, const char *name);
 void b_load_running_dyldcache(struct binary *binary, void *baseaddr);
-void b_dyldcache_load_macho(struct binary *binary, const char *filename);
+void b_dyldcache_load_macho(const struct binary *binary, const char *filename, struct binary *out);
 
 void b_macho_load_symbols(struct binary *binary);
 void b_load_macho(struct binary *binary, const char *path, bool rw);

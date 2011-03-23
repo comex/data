@@ -3,6 +3,7 @@
 #include "loader.h"
 #include "nlist.h"
 #include "reloc.h"
+#include "arm_reloc.h"
 #include <assert.h>
 #include <ctype.h>
 
@@ -34,17 +35,47 @@ static uint32_t b_lookup_nlist(const struct binary *load, const struct binary *t
 static void relocate_area(const struct binary *load, const struct binary *target, lookupsym_t lookup_sym, uint32_t slide, uint32_t reloff, uint32_t nreloc) {
     struct relocation_info *things = rangeconv_off((range_t) {load, reloff, nreloc * sizeof(struct relocation_info)}).start;
     for(uint32_t i = 0; i < nreloc; i++) {
-        assert(!things[i].r_pcrel);
+        //assert(!things[i].r_pcrel);
         assert(things[i].r_length == 2);
-        assert(things[i].r_type == 0);
-        uint32_t thing = /*reloc_base + */things[i].r_address;
-        uint32_t *p = rangeconv((range_t) {load, thing, 4}).start;
+        uint32_t *p = rangeconv((range_t) {load, things[i].r_address, 4}).start;
+        uint32_t value;
         if(things[i].r_extern) {
-            *p += b_lookup_nlist(load, target, lookup_sym, things[i].r_symbolnum);
+            value = b_lookup_nlist(load, target, lookup_sym, things[i].r_symbolnum);
         } else {
             // *shrug*
-            *p += slide;
+            value = slide;
         }
+        switch(things[i].r_type) {
+        case ARM_RELOC_VANILLA:
+            *p += value;
+            break;
+        case ARM_RELOC_BR24: {
+            assert(things[i].r_pcrel);
+            uint32_t ins = *p;
+            uint32_t off = ins & 0x00ffffff;
+            if(ins & 0x00800000) off |= 0xff000000;
+            off <<= 2;
+            off += (value - slide);
+            if((off & 0xfc000000) != 0 &&
+               (off & 0xfc000000) != 0xfc000000) {
+                die("BR24 relocation out of range");
+            }
+            uint32_t cond = ins >> 28;
+            if(value & 1) {
+                assert(cond == 0xe || cond == 0xf);
+                ins = (ins & 0x0effffff) | 0xf0000000 | ((off & 2) << 24);
+            } else if(cond == 0xf) {
+                ins = (ins & 0x0fffffff) | 0xe0000000;
+            }
+
+            ins = (ins & 0xff000000) | ((off >> 2) & 0x00ffffff);
+            *p = ins;
+            break;
+        }
+        default:
+            die("unknown relocation type %d", things[i].r_type);
+        }
+
     }
 }
 

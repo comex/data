@@ -105,23 +105,24 @@ void b_load_running_dyldcache(struct binary *binary, void *baseaddr) {
     do_dyld_hdr(binary);
 }
 
-void b_dyldcache_load_macho(struct binary *binary, const char *filename) {
+void b_dyldcache_load_macho(const struct binary *binary, const char *filename, struct binary *out) {
     if(binary->dyld_hdr->imagesCount > 1000) {
         die("insane images count");
     }
+    *out = *binary;
     for(unsigned int i = 0; i < binary->dyld_hdr->imagesCount; i++) {
         struct dyld_cache_image_info *info = rangeconv_off((range_t) {binary, binary->dyld_hdr->imagesOffset + i * sizeof(*info), sizeof(*info)}).start;
         char *name = rangeconv_off((range_t) {binary, info->pathFileOffset, 128}).start;
+
         if(strncmp(name, filename, 128)) {
             continue;
         }
         // we found it
-        binary->mach_hdr = rangeconv((range_t) {binary, (addr_t) info->address, 0x1000}).start;
-        goto ok;
+        out->mach_hdr = rangeconv((range_t) {binary, (addr_t) info->address, 0x1000}).start;
+        b_macho_load_symbols(out);
+        return;
     }
     die("couldn't find %s in dyld cache", filename);
-    ok:
-    b_macho_load_symbols(binary);
 }
 
 #define DEFINE_RANGECONV_(rettype, name, intro, dfield, mfield, retfunc) \
