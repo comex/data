@@ -135,7 +135,7 @@ rettype name(range_t range) { \
         } \
         sfm = range.binary->dyld_mappings; \
         for(uint32_t i = 0; i < range.binary->dyld_mapping_count; i++) { \
-            if(sfm->dfield <= range.start && sfm->dfield + sfm->sfm_size >= range.start - range.size) { \
+            if(sfm->dfield <= range.start && sfm->dfield + sfm->sfm_size >= range.start + range.size) { \
                 /* ditto */ \
                 ((struct binary *) (range.binary))->last_sfm = sfm; \
                 goto dok; \
@@ -153,7 +153,7 @@ rettype name(range_t range) { \
         CMD_ITERATE(range.binary->mach_hdr, cmd) { \
             if(cmd->cmd == LC_SEGMENT) { \
                 seg = (void *) cmd; \
-                if(seg->mfield <= range.start && seg->mfield + seg->filesize >= range.start - range.size) { \
+                if(seg->mfield <= range.start && seg->mfield + seg->filesize >= range.start + range.size) { \
                     ((struct binary *) (range.binary))->last_seg = seg; \
                     goto mok; \
                 } \
