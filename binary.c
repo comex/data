@@ -26,8 +26,9 @@ void b_macho_load_symbols(struct binary *binary) {
             binary->strtab = rangeconv_off((range_t) {binary, scmd->stroff, scmd->strsize}).start;
         } else if(cmd->cmd == LC_DYSYMTAB) {
             binary->dysymtab = (void *) cmd;
-        } else if(cmd->cmd == LC_DYLD_INFO_ONLY) {
-            //fprintf(stderr, "b_load_symbols: warning: file is fancy, symbols might be missing\n");
+        } else if(cmd->cmd == LC_DYLD_INFO_ONLY || cmd->cmd == LC_DYLD_INFO) {
+            struct dyld_info_command *dcmd = (void *) cmd;
+            binary->export_trie = rangeconv_off((range_t) {binary, dcmd->export_off, dcmd->export_size});
         }
     }
     if(binary->symtab && binary->dysymtab) {
@@ -119,6 +120,26 @@ void b_dyldcache_load_macho(const struct binary *binary, const char *filename, s
         }
         // we found it
         out->mach_hdr = rangeconv((range_t) {binary, (addr_t) info->address, 0x1000}).start;
+        
+        // look for reexports (maybe blowing the stack)
+        int count = 0;
+        CMD_ITERATE(out->mach_hdr, cmd) {
+            if(cmd->cmd == LC_REEXPORT_DYLIB) count++;
+        }
+        out->reexport_count = count;
+        if(count > 0 && count < 10000) {
+            struct binary *p = out->reexports = malloc(count * sizeof(struct binary));
+            CMD_ITERATE(out->mach_hdr, cmd) {
+                if(cmd->cmd == LC_REEXPORT_DYLIB) {
+                    b_init(p);
+                    struct dylib *dylib = &((struct dylib_command *) cmd)->dylib;
+                    char *name = ((char *) cmd) + dylib->name.offset;
+                    b_dyldcache_load_macho(out, name, p);
+                    p++;
+                }
+            }
+        }
+
         b_macho_load_symbols(out);
         return;
     }
@@ -298,11 +319,7 @@ range_t b_macho_segrange(const struct binary *binary, const char *segname) {
     die("no such segment %s", segname);
 }
 
-// return value is |1 if to_execute is set and it is a thumb symbol
-addr_t b_sym(const struct binary *binary, const char *name, bool to_execute, bool must_find) {
-    if(!binary->ext_symtab) {
-        die("we wanted %s but there is no symbol table", name);
-    }
+static addr_t b_sym_nlist(const struct binary *binary, const char *name, bool to_execute) {
     // I stole dyld's codez
     const struct nlist *base = binary->ext_symtab;
     for(uint32_t n = binary->ext_nsyms; n > 0; n /= 2) {
@@ -325,10 +342,101 @@ addr_t b_sym(const struct binary *binary, const char *name, bool to_execute, boo
             n--;
         }
     }
-    if(must_find) {
-        die("symbol %s not found", name);
+    return 0;
+}
+
+// ld64
+static uint32_t read_uleb128(void **ptr, void *end) {
+    uint32_t result = 0;
+    uint8_t *p = *ptr;
+    uint8_t bit;
+    int shift = 0;
+    do {
+        if(p >= (uint8_t *) end) die("uleb128 overrun");
+        bit = *p++;
+        uint32_t k = bit & 0x7f;
+        if(((k << shift) >> shift) != k) die("uleb128 too big");
+        result |= k << shift;
+        shift += 7;
+    } while(bit & 0x80);
+    *ptr = p;
+    return result;
+}
+
+static inline void *read_bytes(void **ptr, void *end, size_t size) {
+    char *p = *ptr;
+    if(p == end || (size_t) ((char *) end - p) < size) die("too big");
+    *ptr = p + size;
+    return p;
+}
+
+#define read_int(ptr, end, typ) *((typ *) read_bytes(ptr, end, sizeof(typ)))
+
+static addr_t trie_recurse(void *ptr, char *start, char *end, const char *name0, const char *name, bool to_execute) {
+    uint8_t terminal_size = read_int(&ptr, end, uint8_t);
+    if(terminal_size) {
+        uint32_t flags = read_uleb128(&ptr, end);
+        uint32_t address = read_uleb128(&ptr, end);
+        uint32_t resolver = 0;
+        if(flags & 0x10) {
+            resolver = read_uleb128(&ptr, end);
+        }
+        if(!name[0]) {
+            if(resolver) {
+                fprintf(stderr, "trie_recurse: %s has a resolver; returning failure\n", name0);
+                return 0;
+            }
+            return (addr_t) address;
+        }
+    }
+
+    uint8_t child_count = read_int(&ptr, end, uint8_t);
+    while(child_count--) {
+        const char *name2 = name;
+        char c;
+        while(1) {
+            c = read_int(&ptr, end, char);
+            if(!c) {
+                uint64_t offset = read_uleb128(&ptr, end);
+                if(offset >= (size_t) (end - start)) die("invalid child offset");
+                return trie_recurse(start + offset, start, end, name0, name2, to_execute);
+            }
+            if(c != *name2++) {
+                break;
+            }
+        }
+        // skip the rest
+        do {
+            c = read_int(&ptr, end, char);
+        } while(c);
+        read_uleb128(&ptr, end);
     }
     return 0;
+}
+
+static addr_t b_sym_trie(const struct binary *binary, const char *name, bool to_execute) {
+    return trie_recurse(binary->export_trie.start,
+                        binary->export_trie.start,
+                        (char *)binary->export_trie.start + binary->export_trie.size,
+                        name,
+                        name,
+                        to_execute);
+}
+
+// return value is |1 if to_execute is set and it is a thumb symbol
+addr_t b_sym(const struct binary *binary, const char *name, bool to_execute, bool must_find) {
+    for(int i = 0; i < binary->reexport_count; i++) {
+        addr_t result;
+        if(result = b_sym(&binary->reexports[i], name, to_execute, false)) {
+            return result;
+        }
+    }
+
+    addr_t result = (binary->export_trie.start ? b_sym_trie : b_sym_nlist)(binary, name, to_execute);
+    if(!result && must_find) {
+        die("symbol %s not found", name);
+    }
+    return result;
 }
 
 addr_t b_private_sym(const struct binary *binary, const char *name, bool to_execute, bool must_find) {
@@ -375,7 +483,6 @@ void b_macho_store(struct binary *binary, const char *path) {
         }
     } else {
         size_t tow = ((char *)binary->limit) - ((char *)binary->load_base);
-        printf("%zx %p %p\n", tow, binary->limit, binary->load_base);
         ssize_t result = write(fd, binary->load_base, tow);
         if(result < 0 || result != (ssize_t)tow) {
             edie("couldn't write whole file");
