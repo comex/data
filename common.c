@@ -3,6 +3,8 @@
 #include <sys/time.h>
 #include <sys/types.h>
 #include <sys/mman.h>
+#include <setjmp.h>
+#include <stdarg.h>
 
 prange_t pdup(prange_t range) {
     void *buf = malloc(range.size);
@@ -114,3 +116,33 @@ uint32_t parse_hex_uint32(char *string) {
     free(pr.start);
     return swap32(u);
 }
+
+static jmp_buf die_handler;
+static bool die_handler_valid;
+static char die_message[256];
+
+void died(const char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    if(die_handler_valid) {
+        die_handler_valid = false;
+        vsnprintf(die_message, sizeof(die_message), fmt, ap);
+        longjmp(die_handler, -1);     
+    } else {
+        vfprintf(stderr, fmt, ap);
+        exit(1);
+    }
+    va_end(ap);
+}
+
+// be nice to Python (but actually this is magic)
+const char *data_try(void (*func)()) {
+    if(setjmp(die_handler)) {
+        return die_message;
+    } else {
+        die_handler_valid = true;
+        func();
+        return NULL;
+    }
+}
+

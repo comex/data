@@ -27,9 +27,15 @@ struct binary {
     struct nlist *ext_symtab;
     uint32_t ext_nsyms;
 
+    // alternatively
+    prange_t export_trie;
+
     char *strtab;
     uint32_t strsize;
     struct dysymtab_command *dysymtab;
+
+    struct binary *reexports;
+    int reexport_count;
 };
 
 

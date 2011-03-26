@@ -21,12 +21,10 @@
 #endif
 
 __attribute__((unused)) static const char *_arg = MAP_FAILED;
-#define die(fmt, args...) do { \
-    fprintf(stderr, "%s: ", __func__); \
-    if(_arg != MAP_FAILED) fprintf(stderr, "%s: ", _arg); \
-    fprintf(stderr, fmt "\n", ##args); \
-    exit(1); \
-} while(0)
+#define die(fmt, args...) ((_arg == MAP_FAILED) ? \
+    died("%s: " fmt "\n", __func__, ##args) : \
+    died("%s: %s: " fmt "\n", __func__, _arg, ##args))
+
 #define edie(fmt, args...) die(fmt ": %s", ##args, strerror(errno))
 
 struct binary;
@@ -50,3 +48,5 @@ prange_t load_fd(int fd, bool rw);
 void store_file(prange_t range, const char *filename, mode_t mode);
 
 uint32_t parse_hex_uint32(char *string);
+
+__attribute__((noreturn)) void died(const char *fmt, ...);
