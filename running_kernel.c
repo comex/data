@@ -216,7 +216,7 @@ void unload_from_running_kernel(uint32_t addr) {
 
     vm_size_t whatever;
     
-    struct mach_header *hdr = malloc(0x1000);
+    autofree struct mach_header *hdr = malloc(0x1000);
     if(vm_read_overwrite(kernel_task,
                          (vm_address_t) addr,
                          0x1000,
@@ -242,7 +242,7 @@ void unload_from_running_kernel(uint32_t addr) {
                 if((sect->flags & SECTION_TYPE) == S_MOD_TERM_FUNC_POINTERS) {
                     uint32_t sysent = sect->reserved2; // hurf durf
                     assert(sysent);
-                    void **things = malloc(sect->size);
+                    autofree void **things = malloc(sect->size);
                     kr_assert(vm_read_overwrite(kernel_task,
                                                 (vm_address_t) sect->addr,
                                                 sect->size,
@@ -257,7 +257,6 @@ void unload_from_running_kernel(uint32_t addr) {
                                            sizeof(struct sysent)));
                         syscall(11);
                     }
-                    free(things);
                 }
             }
         }
@@ -273,7 +272,6 @@ void unload_from_running_kernel(uint32_t addr) {
             }
         }
     }
-    free(hdr);
 }
 
 void b_running_kernel_load_macho(struct binary *binary) {

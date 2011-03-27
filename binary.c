@@ -5,6 +5,7 @@
 #include "fat.h"
 #include "dyld_cache_format.h"
 #include "find.h"
+#include <stddef.h>
 
 const int desired_cputype = 12; // ARM
 const int desired_cpusubtype = 0; // v7=9, v6=6
@@ -107,10 +108,19 @@ void b_load_running_dyldcache(struct binary *binary, void *baseaddr) {
 }
 
 void b_dyldcache_load_macho(const struct binary *binary, const char *filename, struct binary *out) {
+    if(!binary->dyld_hdr) {
+        die("not a dyld cache");
+    }
+
     if(binary->dyld_hdr->imagesCount > 1000) {
         die("insane images count");
     }
-    *out = *binary;
+
+    if(out != binary) {
+        memset(out, 0, sizeof(*out));
+        memcpy(out, binary, offsetof(struct binary, mach_hdr));
+    }
+
     for(unsigned int i = 0; i < binary->dyld_hdr->imagesCount; i++) {
         struct dyld_cache_image_info *info = rangeconv_off((range_t) {binary, binary->dyld_hdr->imagesOffset + i * sizeof(*info), sizeof(*info)}).start;
         char *name = rangeconv_off((range_t) {binary, info->pathFileOffset, 128}).start;
@@ -126,7 +136,6 @@ void b_dyldcache_load_macho(const struct binary *binary, const char *filename, s
         CMD_ITERATE(out->mach_hdr, cmd) {
             if(cmd->cmd == LC_REEXPORT_DYLIB) count++;
         }
-        out->reexport_count = count;
         if(count > 0 && count < 10000) {
             struct binary *p = out->reexports = malloc(count * sizeof(struct binary));
             CMD_ITERATE(out->mach_hdr, cmd) {
@@ -342,6 +351,14 @@ static addr_t b_sym_nlist(const struct binary *binary, const char *name, bool to
             n--;
         }
     }
+
+    for(unsigned int i = 0; i < binary->reexport_count; i++) {
+        addr_t result;
+        if(result = b_sym(&binary->reexports[i], name, to_execute, false)) {
+            return result;
+        }
+    }
+
     return 0;
 }
 
@@ -372,7 +389,7 @@ static inline void *read_bytes(void **ptr, void *end, size_t size) {
 
 #define read_int(ptr, end, typ) *((typ *) read_bytes(ptr, end, sizeof(typ)))
 
-static addr_t trie_recurse(void *ptr, char *start, char *end, const char *name0, const char *name, bool to_execute) {
+static addr_t trie_recurse(const struct binary *binary, void *ptr, char *start, char *end, const char *name0, const char *name, bool to_execute) {
     uint8_t terminal_size = read_int(&ptr, end, uint8_t);
     if(terminal_size) {
         uint32_t flags = read_uleb128(&ptr, end);
@@ -385,6 +402,13 @@ static addr_t trie_recurse(void *ptr, char *start, char *end, const char *name0,
             if(resolver) {
                 fprintf(stderr, "trie_recurse: %s has a resolver; returning failure\n", name0);
                 return 0;
+            }
+            if(flags & 8) {
+                // indirect definition
+                if(address >= binary->reexport_count) {
+                    die("invalid sub-library %d", address);
+                }
+                return b_sym(&binary->reexports[address], name0, to_execute, false);
             }
             return (addr_t) address;
         }
@@ -399,7 +423,7 @@ static addr_t trie_recurse(void *ptr, char *start, char *end, const char *name0,
             if(!c) {
                 uint64_t offset = read_uleb128(&ptr, end);
                 if(offset >= (size_t) (end - start)) die("invalid child offset");
-                return trie_recurse(start + offset, start, end, name0, name2, to_execute);
+                return trie_recurse(binary, start + offset, start, end, name0, name2, to_execute);
             }
             if(c != *name2++) {
                 break;
@@ -415,7 +439,8 @@ static addr_t trie_recurse(void *ptr, char *start, char *end, const char *name0,
 }
 
 static addr_t b_sym_trie(const struct binary *binary, const char *name, bool to_execute) {
-    return trie_recurse(binary->export_trie.start,
+    return trie_recurse(binary,
+                        binary->export_trie.start,
                         binary->export_trie.start,
                         (char *)binary->export_trie.start + binary->export_trie.size,
                         name,
@@ -425,13 +450,6 @@ static addr_t b_sym_trie(const struct binary *binary, const char *name, bool to_
 
 // return value is |1 if to_execute is set and it is a thumb symbol
 addr_t b_sym(const struct binary *binary, const char *name, bool to_execute, bool must_find) {
-    for(int i = 0; i < binary->reexport_count; i++) {
-        addr_t result;
-        if(result = b_sym(&binary->reexports[i], name, to_execute, false)) {
-            return result;
-        }
-    }
-
     addr_t result = (binary->export_trie.start ? b_sym_trie : b_sym_nlist)(binary, name, to_execute);
     if(!result && must_find) {
         die("symbol %s not found", name);

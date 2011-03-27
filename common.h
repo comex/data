@@ -20,10 +20,14 @@
 #include <time.h>
 #endif
 
+static inline void _free_cleanup(void *p) { free(*((void **) p)); }
+#define autofree __attribute__((cleanup(_free_cleanup)))
+
 __attribute__((unused)) static const char *_arg = MAP_FAILED;
+
 #define die(fmt, args...) ((_arg == MAP_FAILED) ? \
-    died("%s: " fmt "\n", __func__, ##args) : \
-    died("%s: %s: " fmt "\n", __func__, _arg, ##args))
+    _die("%s: " fmt "\n", __func__, ##args) : \
+    _die("%s: %s: " fmt "\n", __func__, _arg, ##args))
 
 #define edie(fmt, args...) die(fmt ": %s", ##args, strerror(errno))
 
@@ -49,4 +53,4 @@ void store_file(prange_t range, const char *filename, mode_t mode);
 
 uint32_t parse_hex_uint32(char *string);
 
-__attribute__((noreturn)) void died(const char *fmt, ...);
+__attribute__((noreturn)) void _die(const char *fmt, ...);

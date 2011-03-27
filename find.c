@@ -66,7 +66,7 @@ addr_t find_data(range_t range, char *to_find, int align, bool must_find) {
     int16_t buf[128];
     ssize_t pattern_size = 0;
     ssize_t offset = -1;
-    char *to_find_ = strdup(to_find);
+    autofree char *to_find_ = strdup(to_find);
     while(to_find_) {
         char *bit = strsep(&to_find_, " ");
         if(!strcmp(bit, "-")) {
@@ -88,7 +88,6 @@ addr_t find_data(range_t range, char *to_find, int align, bool must_find) {
             die("pattern [%s] too big", to_find);
         }
     }
-    free(to_find_);
     if(offset == -1) {
         die("pattern [%s] doesn't have an offset", to_find);
     }
@@ -102,23 +101,21 @@ addr_t find_data(range_t range, char *to_find, int align, bool must_find) {
 
 addr_t find_string(range_t range, const char *string, int align, bool must_find) {
     size_t len = strlen(string);
-    int16_t *buf = malloc(sizeof(int16_t) * (len + 2));
+    autofree int16_t *buf = malloc(sizeof(int16_t) * (len + 2));
     buf[0] = buf[len + 1] = 0;
     for(unsigned int i = 0; i < len; i++) {
         buf[i+1] = (uint8_t) string[i];
     }
     addr_t result = find_data_raw(range, buf, len + 2, 1, align, must_find, string);
-    free(buf);
     return result;
 }
 
 addr_t find_bytes(range_t range, const char *bytes, size_t len, int align, bool must_find) {
-    int16_t *buf = malloc(sizeof(int16_t) * (len + 2));
+    autofree int16_t *buf = malloc(sizeof(int16_t) * (len + 2));
     for(unsigned int i = 0; i < len; i++) {
         buf[i] = (uint8_t) bytes[i];
     }
     addr_t result = find_data_raw(range, buf, len, 0, align, must_find, "bytes");
-    free(buf);
     return result;
 }
 addr_t find_int32(range_t range, uint32_t number, bool must_find) {

@@ -156,3 +156,6 @@ void b_relocate(struct binary *load, const struct binary *target, lookupsym_t lo
     }
 }
 
+uint32_t b_lookup_sym(const struct binary *binary, const char *sym) {
+    return b_sym(binary, sym, true, true);
+}

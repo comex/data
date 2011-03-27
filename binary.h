@@ -35,7 +35,7 @@ struct binary {
     struct dysymtab_command *dysymtab;
 
     struct binary *reexports;
-    int reexport_count;
+    unsigned int reexport_count;
 };
 
 

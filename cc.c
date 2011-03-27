@@ -36,7 +36,7 @@ prange_t decrypt_and_decompress(uint32_t key_bits, prange_t key, prange_t iv, pr
         die("bad iv_len %zu", iv.size);
     }
     size_t outbuf_len = buffer.size + 32;
-    void *outbuf = malloc(outbuf_len);
+    autofree void *outbuf = malloc(outbuf_len);
     assert(outbuf);
     CCCryptorStatus result = CCCrypt(kCCDecrypt,
                                      kCCAlgorithmAES128,
@@ -88,8 +88,6 @@ prange_t decrypt_and_decompress(uint32_t key_bits, prange_t key, prange_t iv, pr
 #else
     (void) checksum;
 #endif
-
-    free(outbuf);
 #ifdef PROFILING
     clock_t tv3 = clock();
     printf("decrypt:%u decompress:%u\n", (unsigned int) (tv2 - tv1), (unsigned int) (tv3 - tv2));
