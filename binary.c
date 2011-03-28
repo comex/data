@@ -10,6 +10,47 @@
 const int desired_cputype = 12; // ARM
 const int desired_cpusubtype = 0; // v7=9, v6=6
 
+static inline bool prange_check(const struct binary *binary, prange_t range);
+
+static void b_verify_macho(const struct binary *binary) {
+    struct mach_header *hdr = binary->mach_hdr;
+    if(!prange_check(binary, (prange_t) {hdr, sizeof(*hdr)}) ||
+       !prange_check(binary, (prange_t) {hdr, hdr->sizeofcmds})) {
+        die("not enough room for commands");
+    }
+    CMD_ITERATE(hdr, cmd) {
+        if(cmd + 1 > end || cmd > end - 1) {
+            die("sizeofcmds is not even");
+        }
+        if(cmd->cmdsize > (size_t) ((char *) end - (char *) cmd)) {
+            die("cmdsize overflows (%u)", cmd->cmdsize);
+        }
+        uint32_t required = 0;
+        switch(cmd->cmd) {
+        case LC_SEGMENT:
+            required = sizeof(struct segment_command);
+            break;
+        case LC_REEXPORT_DYLIB:
+            required = sizeof(struct dylib_command);
+            break;
+        case LC_SYMTAB:
+            required = sizeof(struct symtab_command);
+            break;
+        case LC_DYSYMTAB:
+            required = sizeof(struct dysymtab_command);
+            break;
+        case LC_DYLD_INFO:
+        case LC_DYLD_INFO_ONLY:
+            required = sizeof(struct dyld_info_command);
+            break;
+        }
+
+        if(cmd->cmdsize < required) {
+            die("cmdsize (%u) too small for cmd (0x%x)", cmd->cmdsize, cmd->cmd);
+        }
+    }
+}
+
 void b_init(struct binary *binary) {
     memset(binary, 0, sizeof(*binary));
 }
@@ -77,7 +118,8 @@ void b_prange_load_dyldcache(struct binary *binary, prange_t pr, const char *nam
 #define _arg name
     binary->valid = true;
     binary->is_address_indexed = false;
-    binary->load_base = pr.start;
+    binary->valid_range = pr;
+    binary->load_add = pr.start;
 
     if(pr.size < sizeof(*binary->dyld_hdr)) {
         die("truncated (no room for dyld cache header)");
@@ -102,8 +144,8 @@ void b_load_running_dyldcache(struct binary *binary, void *baseaddr) {
     binary->valid = true;
     binary->is_address_indexed = true;
     binary->dyld_hdr = baseaddr;
-    binary->load_base = NULL;
-    binary->limit = NULL;
+    binary->valid_range = (prange_t) {NULL, (size_t) -1};
+    binary->load_add = NULL;
     do_dyld_hdr(binary);
 }
 
@@ -129,7 +171,9 @@ void b_dyldcache_load_macho(const struct binary *binary, const char *filename, s
             continue;
         }
         // we found it
-        out->mach_hdr = rangeconv((range_t) {binary, (addr_t) info->address, 0x1000}).start;
+        // XXX out->mach_hdr = verify_macho(b_extend_prange(binary, 
+        out->mach_hdr = rangeconv((range_t) {binary, info->address, 0}).start;
+        b_verify_macho(out);
         
         // look for reexports (maybe blowing the stack)
         int count = 0;
@@ -137,10 +181,10 @@ void b_dyldcache_load_macho(const struct binary *binary, const char *filename, s
             if(cmd->cmd == LC_REEXPORT_DYLIB) count++;
         }
         if(count > 0 && count < 10000) {
+            out->reexport_count = count;
             struct binary *p = out->reexports = malloc(count * sizeof(struct binary));
             CMD_ITERATE(out->mach_hdr, cmd) {
                 if(cmd->cmd == LC_REEXPORT_DYLIB) {
-                    b_init(p);
                     struct dylib *dylib = &((struct dylib_command *) cmd)->dylib;
                     char *name = ((char *) cmd) + dylib->name.offset;
                     b_dyldcache_load_macho(out, name, p);
@@ -155,148 +199,161 @@ void b_dyldcache_load_macho(const struct binary *binary, const char *filename, s
     die("couldn't find %s in dyld cache", filename);
 }
 
-#define DEFINE_RANGECONV_(rettype, name, intro, dfield, mfield, retfunc) \
-rettype name(range_t range) { \
-    if(range.start > range.start + range.size) goto err; \
-    if(range.binary->dyld_hdr) { \
-        struct shared_file_mapping_np *sfm = range.binary->last_sfm; \
-        if(sfm && sfm->dfield <= range.start && sfm->dfield + sfm->sfm_size >= range.start + range.size) { \
-            goto dok; \
-        } \
-        sfm = range.binary->dyld_mappings; \
-        for(uint32_t i = 0; i < range.binary->dyld_mapping_count; i++) { \
-            if(sfm->dfield <= range.start && sfm->dfield + sfm->sfm_size >= range.start + range.size) { \
-                /* ditto */ \
-                ((struct binary *) (range.binary))->last_sfm = sfm; \
-                goto dok; \
-            } \
-            sfm++; \
-        } \
-        goto err; \
-        dok: \
-        return retfunc(range.binary, sfm->sfm_address, sfm->sfm_file_offset, range.start - sfm->dfield, range.size); \
-    } else if(range.binary->mach_hdr) { \
-        struct segment_command *seg = range.binary->last_seg; \
-        if(seg && seg->mfield <= range.start && seg->mfield + seg->filesize >= range.start + range.size) { \
-            goto mok; \
-        } \
-        CMD_ITERATE(range.binary->mach_hdr, cmd) { \
-            if(cmd->cmd == LC_SEGMENT) { \
-                seg = (void *) cmd; \
-                if(seg->mfield <= range.start && seg->mfield + seg->filesize >= range.start + range.size) { \
-                    ((struct binary *) (range.binary))->last_seg = seg; \
-                    goto mok; \
-                } \
-            } \
-        } \
-        goto err; \
-        mok: \
-        return retfunc(range.binary, seg->vmaddr, seg->fileoff, range.start - seg->mfield, range.size); \
-    } else { \
-        die("neither dyld_hdr nor mach_hdr present"); \
-    } \
-    err: \
-    die(intro " (%08x, %zx) not valid", range.start, range.size); \
+static bool rangeconv_stuff(const struct binary *binary, addr_t addr, bool is_off, addr_t *out_address, addr_t *out_offset, size_t *out_size) {
+#define D \
+    addr_t dfield = is_off ? sfm->sfm_file_offset : sfm->sfm_address; \
+    addr_t diff = addr - dfield; \
+    if(diff < sfm->sfm_size) { \
+        ((struct binary *) binary)->last_sfm = sfm; \
+        *out_address = (addr_t)sfm->sfm_address + diff; \
+        *out_offset = (addr_t)sfm->sfm_file_offset + diff; \
+        *out_size = sfm->sfm_size - diff; \
+        return true; \
+    }
+#define M \
+    addr_t mfield = is_off ? seg->fileoff : seg->vmaddr; \
+    addr_t diff = addr - mfield; \
+    if(diff < seg->filesize) { \
+        ((struct binary *) binary)->last_seg = seg; \
+        *out_address = (addr_t)seg->vmaddr + diff; \
+        *out_offset = (addr_t)seg->fileoff + diff; \
+        *out_size = seg->filesize - diff; \
+        return true; \
+    }
+
+    if(binary->dyld_hdr) {
+        struct shared_file_mapping_np *sfm = binary->last_sfm;
+        if(sfm) {
+            D
+        }
+        sfm = binary->dyld_mappings;
+        for(uint32_t i = 0; i < binary->dyld_mapping_count; i++) {
+            D
+            sfm++;
+        }
+    } else if(binary->mach_hdr) {
+        struct segment_command *seg = binary->last_seg;
+        if(seg) {
+            M
+        }
+        CMD_ITERATE(binary->mach_hdr, cmd) {
+            if(cmd->cmd == LC_SEGMENT) {
+                seg = (void *) cmd;
+                M
+            }
+        }
+    }
+    return false;
+#undef D
+#undef M
 }
-#define DEFINE_RANGECONV(a, b, c, d) DEFINE_RANGECONV_(a, b, c, d)
 
+static inline void *b_add(const struct binary *binary, addr_t start) {
+    if(!binary->is_address_indexed && start == 0 && binary->mach_hdr) {
+        // dyld caches are weird.
+        return binary->mach_hdr;
+    }
+    return (char *) binary->load_add + start;
+}
 
-#define w_range "range", sfm_address, vmaddr
-#define w_off_range "offset range", sfm_file_offset, fileoff
+prange_t rangeconv_generic(range_t range, bool is_off) {
+    prange_t pr;
+    if(range.binary->is_address_indexed != is_off) {
+        pr = (prange_t) {b_add(range.binary, range.start), range.size};
+    } else {
+        addr_t address; addr_t offset; size_t size;
+            
+        if(rangeconv_stuff(range.binary, range.start, is_off, &address, &offset, &size)) {
+            pr = (prange_t) {b_add(range.binary, range.binary->is_address_indexed ? address : offset), range.size};
+        } else {    
+            goto bad;
+        }
+    }
+    if(prange_check(range.binary, pr)) {
+        return pr;
+    }
+    bad:
+    die("%s (%08x, %zx) not valid", is_off ? "offset range" : "range", range.start, range.size);
+}
 
-#define x_prange(binary, addrbase, offbase, diff, size) \
-    (prange_t) {(char *)(binary->load_base) + (binary->is_address_indexed ? addrbase : offbase) + diff, size}
-#define x_range(binary, addrbase, offbase, diff, size) \
-    (range_t) {binary, addrbase + diff, size}
-#define x_off_range(binary, addrbase, offbase, diff, size) \
-    (range_t) {binary, offbase + diff, size}
-
-DEFINE_RANGECONV(prange_t, rangeconv, w_range, x_prange)
-static inline DEFINE_RANGECONV(prange_t, rangeconv_off_helper, w_off_range, x_prange)
-DEFINE_RANGECONV(range_t, range_to_off_range, w_range, x_off_range)
-DEFINE_RANGECONV(range_t, off_range_to_range, w_off_range, x_range)
+prange_t rangeconv(range_t range) {
+    return rangeconv_generic(range, false);
+}
 
 prange_t rangeconv_off(range_t range) {
-    if(!range.binary->is_address_indexed) {
-        char *base = (char *) range.binary->load_base + range.start;
-        if(range.size <= (size_t) ((char *) range.binary->limit - base)) {
-            return (prange_t) {base, range.size};       
-        } else {
-            die("offset range (%08x, %zx) not valid", range.start, range.size);
-        }
-    } else {
-        return rangeconv_off_helper(range);
+    return rangeconv_generic(range, true);
+}
+
+bool prange_check(const struct binary *binary, prange_t range) {
+    return binary->valid_range.start <= range.start && range.size <= (size_t) ((char *) binary->valid_range.start + binary->valid_range.size - (char *) range.start);
+}
+
+range_t range_to_off_range(range_t range) {
+    addr_t address; addr_t offset; size_t size;
+    if(rangeconv_stuff(range.binary, range.start, true, &address, &offset, &size) && size < range.size) {
+        return (range_t) {range.binary, offset, range.size};
     }
+    die("range (%08x, %zx) not valid", range.start, range.size);
+}
+
+range_t off_range_to_range(range_t range) {
+    addr_t address; addr_t offset; size_t size;
+    if(rangeconv_stuff(range.binary, range.start, false, &address, &offset, &size) && size < range.size) {
+        return (range_t) {range.binary, address, range.size};
+    }
+    die("offset range (%08x, %zx) not valid", range.start, range.size);
 }
 
 void b_prange_load_macho(struct binary *binary, prange_t pr, const char *name) {
 #define _arg name
     binary->valid = true;
     binary->is_address_indexed = false;
-
-    if(pr.size < sizeof(struct mach_header)) {
-        die("truncated (no room for mach header)");
-    }
-    
-    struct mach_header *mach_hdr;
+    binary->load_add = pr.start;
+    binary->valid_range = pr;
 
     uint32_t magic = *(uint32_t *)pr.start;
-    uint32_t fat_offset;
     if(magic == MH_MAGIC) {
         // thin file
-        mach_hdr = pr.start;
-        if(mach_hdr->cputype != desired_cputype || (mach_hdr->cpusubtype != 0 && desired_cpusubtype != 0 && mach_hdr->cpusubtype != desired_cpusubtype)) {
+        binary->mach_hdr = pr.start;
+        b_verify_macho(binary);
+        if(binary->mach_hdr->cputype != desired_cputype || (binary->mach_hdr->cpusubtype != 0 && desired_cpusubtype != 0 && binary->mach_hdr->cpusubtype != desired_cpusubtype)) {
             die("thin file doesn't have the right architecture");
         }
-        fat_offset = 0;
     } else if(magic == FAT_CIGAM) {
+        if(pr.size < sizeof(struct fat_header)) {
+            die("fat header is too small");
+        }
         struct fat_header *fathdr = pr.start;
         struct fat_arch *arch = (void *)(fathdr + 1);
         uint32_t nfat_arch = swap32(fathdr->nfat_arch);
-        if(sizeof(struct fat_header) + nfat_arch * sizeof(struct fat_arch) >= 0x1000) {
-            die("fat header is too big");
+        if(nfat_arch > 1000 || pr.size < sizeof(struct fat_header) + nfat_arch * sizeof(struct fat_arch)) {
+            die("fat header is too small");
         }
-        mach_hdr = NULL;
+        binary->mach_hdr = NULL;
         while(nfat_arch--) {
             if((int) swap32(arch->cputype) == desired_cputype && (arch->cpusubtype == 0 || desired_cpusubtype == 0 || (int) swap32(arch->cpusubtype) == desired_cpusubtype)) {
-                fat_offset = swap32(arch->offset);
-                if(fat_offset + 0x1000 >= pr.size) {
-                    die("truncated (couldn't seek to fat offset %u)", fat_offset);
+                uint32_t fat_offset = swap32(arch->offset);
+                if(fat_offset >= pr.size) {
+                    die("fat_offset too big");
                 }
-                mach_hdr = (void *) ((char *)pr.start + fat_offset);
+                binary->mach_hdr = (void *) ((char *) pr.start + fat_offset);
+                b_verify_macho(binary);
                 break;
             }
             arch++;
         }
-        if(!mach_hdr) {
+        if(!binary->mach_hdr) {
             die("no compatible architectures in fat file");
         } else if(desired_cpusubtype == 0) {
-            fprintf(stderr, "b_prange_load_macho: warning: fat, but out of apathy we just picked the first architecture with cputype %d, whose subtype was %d\n", desired_cputype, mach_hdr->cpusubtype);
+            fprintf(stderr, "b_prange_load_macho: warning: fat, but out of apathy we just picked the first architecture with cputype %d, whose subtype was %d\n", desired_cputype, binary->mach_hdr->cpusubtype);
         }
     } else {
         die("(%08x) what is this I don't even", magic);
     }
 
-    binary->actual_cpusubtype = mach_hdr->cpusubtype;
-
-    if(mach_hdr->sizeofcmds > 0x1000 - sizeof(*mach_hdr)) {
-        die("sizeofcmds is too big");
-    }
+    binary->actual_cpusubtype = binary->mach_hdr->cpusubtype;
 
     binary->symtab = NULL;
-
-    CMD_ITERATE(mach_hdr, cmd) {
-        if(cmd->cmd == LC_SEGMENT) {
-            const struct segment_command *scmd = (void *) cmd;
-            if(scmd->fileoff >= pr.size || scmd->fileoff + scmd->filesize > pr.size) {
-                die("truncated (no room for mach-o segment)");
-            }
-        }
-    }
-
-    binary->load_base = pr.start;
-    binary->limit = (char *)pr.start + pr.size;
-    binary->mach_hdr = mach_hdr;
 
     b_macho_load_symbols(binary);
 #undef _arg
@@ -405,6 +462,7 @@ static addr_t trie_recurse(const struct binary *binary, void *ptr, char *start, 
             }
             if(flags & 8) {
                 // indirect definition
+                address--;
                 if(address >= binary->reexport_count) {
                     die("invalid sub-library %d", address);
                 }
@@ -493,16 +551,15 @@ void b_macho_store(struct binary *binary, const char *path) {
             if(cmd->cmd == LC_SEGMENT) {
                 struct segment_command *scmd = (void *) cmd;
                 lseek(fd, scmd->fileoff, SEEK_SET);
-                ssize_t result = write(fd, ((char *) binary->load_base) + scmd->vmaddr, scmd->filesize);
+                ssize_t result = write(fd, ((char *) binary->load_add) + scmd->vmaddr, scmd->filesize);
                 if(result < 0 || result != (ssize_t)scmd->filesize) {
                     edie("couldn't write segment data");
                 }
             }
         }
     } else {
-        size_t tow = ((char *)binary->limit) - ((char *)binary->load_base);
-        ssize_t result = write(fd, binary->load_base, tow);
-        if(result < 0 || result != (ssize_t)tow) {
+        ssize_t result = write(fd, binary->valid_range.start, binary->valid_range.size);
+        if(result < 0 || result != (ssize_t)binary->valid_range.size) {
             edie("couldn't write whole file");
         }
     }

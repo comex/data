@@ -143,7 +143,7 @@ const char *data_try(void (*func)()) {
     } else {
         die_handler_valid = true;
         func();
+        die_handler_valid = false;
         return NULL;
     }
 }
-

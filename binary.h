@@ -8,8 +8,8 @@ struct binary {
     bool valid;
 
     int actual_cpusubtype;
-    void *load_base;
-    void *limit;
+    void *load_add;
+    prange_t valid_range;
     bool is_address_indexed;
 
     struct dyld_cache_header *dyld_hdr;
@@ -39,10 +39,6 @@ struct binary {
 };
 
 
-// check for start + size exceeding the range
-//__attribute__((const))
-//prange_t rangeconv_checkof(range_t range);
-
 __attribute__((const)) prange_t rangeconv(range_t range);
 __attribute__((const)) prange_t rangeconv_off(range_t range);
 __attribute__((const)) range_t range_to_off_range(range_t range);
@@ -70,7 +66,7 @@ addr_t b_private_sym(const struct binary *binary, const char *name, bool to_exec
 uint32_t b_allocate_from_macho_fd(int fd);
 void b_inject_into_macho_fd(const struct binary *binary, int fd, addr_t (*find_hack_func)(const struct binary *binary));
 
-#define CMD_ITERATE(hdr, cmd) for(struct load_command *cmd = (void *)((hdr) + 1), *end = (void *)((char *)(hdr) + (hdr)->sizeofcmds); cmd; cmd = (cmd->cmdsize > 0 && cmd->cmdsize < (uint32_t)((char *)end - (char *)cmd)) ? (void *)((char *)cmd + cmd->cmdsize) : NULL)
+#define CMD_ITERATE(hdr, cmd) for(struct load_command *cmd = (void *)((hdr) + 1), *end = (void *)((char *)(hdr + 1) + (hdr)->sizeofcmds); cmd < end; cmd = (void *)((char *)cmd + cmd->cmdsize))
 
 #define r(sz) \
 static inline uint##sz##_t b_read##sz(const struct binary *binary, addr_t addr) { \

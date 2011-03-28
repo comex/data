@@ -340,8 +340,8 @@ void b_running_kernel_load_macho(struct binary *binary) {
     // Well, uh, this sucks.  But there's some block on reading.  In fact, it's probably a bug that this works.
     size_t read_size = maxaddr - mh_addr;
     char *p = malloc(read_size);
-    binary->load_base = p - 0x1000;
-    binary->limit = p + read_size;
+    binary->load_add = p - 0x1000;
+    binary->valid_range = (prange_t) {p, read_size};
 #ifdef PROFILING
     clock_t a = clock();
 #endif
