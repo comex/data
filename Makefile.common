@@ -1,3 +1,5 @@
+NATIVE ?= 0
+
 DYNAMICLIB := -dynamiclib
 DYLIB := dylib
 ifeq "$(NATIVE)" "1"
@@ -8,7 +10,7 @@ else
 GCC ?= gcc -arch i386 -arch x86_64
 endif
 else
-GCC ?= /Developer/Platforms/iPhoneOS.platform/Developer/usr/bin/gcc-4.2 -arch armv7 -isysroot /Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS4.3.sdk/ -mapcs-frame -fomit-frame-pointer -mthumb -fno-builtin-printf -fno-builtin-memset
+GCC ?= /Developer/Platforms/iPhoneOS.platform/Developer/usr/bin/gcc-4.2 -arch armv6 -isysroot /Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS4.3.sdk/ -mapcs-frame -fomit-frame-pointer -mthumb -fno-builtin-printf -fno-builtin-memset
 endif
 
 CFLAGS ?= -g3 -std=gnu99 -Os -Wall -Wextra -Wno-parentheses -Werror
@@ -17,3 +19,6 @@ CFLAGS += -DIMG3_SUPPORT -dead_strip
 endif
 AR ?= ar
 
+SETTINGS = $(NATIVE) $(GCC) $(CFLAGS)
+.settings:
+	@if [ "`cat .settings0 2>/dev/null`" != "$(SETTINGS)" ]; then echo "$(SETTINGS)" > .settings0; make clean; fi
