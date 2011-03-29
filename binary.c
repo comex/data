@@ -290,7 +290,7 @@ bool prange_check(const struct binary *binary, prange_t range) {
 
 range_t range_to_off_range(range_t range) {
     addr_t address; addr_t offset; size_t size;
-    if(rangeconv_stuff(range.binary, range.start, true, &address, &offset, &size) && size < range.size) {
+    if(rangeconv_stuff(range.binary, range.start, false, &address, &offset, &size) && range.size <= size) {
         return (range_t) {range.binary, offset, range.size};
     }
     die("range (%08x, %zx) not valid", range.start, range.size);
@@ -298,7 +298,7 @@ range_t range_to_off_range(range_t range) {
 
 range_t off_range_to_range(range_t range) {
     addr_t address; addr_t offset; size_t size;
-    if(rangeconv_stuff(range.binary, range.start, false, &address, &offset, &size) && size < range.size) {
+    if(rangeconv_stuff(range.binary, range.start, true, &address, &offset, &size) && range.size <= size) {
         return (range_t) {range.binary, address, range.size};
     }
     die("offset range (%08x, %zx) not valid", range.start, range.size);
