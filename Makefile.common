@@ -14,7 +14,7 @@ else
 GCC ?= $(SDK_GCC)
 endif
 
-GCC += -g3 -std=gnu99 -Os -Wall -Wextra -Wno-parentheses -Werror $(CFLAGS)
+GCC += -g3 -std=gnu99 -Os -Wall -Wextra -Wno-parentheses -Wimplicit -Werror $(CFLAGS)
 ifneq ($(strip $(wildcard /usr/include/CommonCrypto)),)
 GCC += -DIMG3_SUPPORT -dead_strip
 endif

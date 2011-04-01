@@ -60,44 +60,41 @@ static addr_t find_data_raw(range_t range, int16_t *buf, ssize_t pattern_size, s
     }
 }
 
-addr_t find_data(range_t range, char *to_find, int align, bool must_find) {
-#ifdef PROFILING
-    clock_t a = clock();
-#endif
-    int16_t buf[128];
-    ssize_t pattern_size = 0;
-    ssize_t offset = -1;
+static void parse_pattern(const char *to_find, int16_t buf[128], ssize_t *pattern_size, ssize_t *offset) {
+    *pattern_size = 0;
+    *offset = -1;
     autofree char *to_find_ = strdup(to_find);
     while(to_find_) {
         char *bit = strsep(&to_find_, " ");
         if(!strcmp(bit, "-")) {
-            offset = pattern_size; 
+            *offset = *pattern_size; 
             continue;
         } else if(!strcmp(bit, "+")) {
-            offset = pattern_size + 1;
+            *offset = *pattern_size + 1;
             continue;
         } else if(!strcmp(bit, "..")) {
-            buf[pattern_size] = -1;
+            buf[*pattern_size] = -1;
         } else {
             char *endptr;
-            buf[pattern_size] = (int16_t) (strtol(bit, &endptr, 16) & 0xff);
+            buf[*pattern_size] = (int16_t) (strtol(bit, &endptr, 16) & 0xff);
             if(*endptr) {
                 die("invalid bit %s in [%s]", bit, to_find);
             }
         }
-        if(++pattern_size >= 128) {
+        if(++*pattern_size >= 128) {
             die("pattern [%s] too big", to_find);
         }
     }
-    if(offset == -1) {
+    if(*offset == -1) {
         die("pattern [%s] doesn't have an offset", to_find);
     }
-    addr_t result = find_data_raw(range, buf, pattern_size, offset, align, must_find, to_find);
-#ifdef PROFILING
-    clock_t b = clock();
-    printf("find_data [%s] took %d/%d\n", to_find, (int)(b - a), (int)CLOCKS_PER_SEC);
-#endif
-    return result;
+}
+
+addr_t find_data(range_t range, const char *to_find, int align, bool must_find) {
+    int16_t buf[128];
+    ssize_t pattern_size, offset;
+    parse_pattern(to_find, buf, &pattern_size, &offset);
+    return find_data_raw(range, buf, pattern_size, offset, align, must_find, to_find);
 }
 
 addr_t find_string(range_t range, const char *string, int align, bool must_find) {
@@ -246,7 +243,7 @@ addr_t find_bl(range_t *range) {
     return baseaddr + diff;
 }
 
-addr_t b_find_anywhere(struct binary *binary, char *to_find, int align, bool must_find) {
+addr_t b_find_anywhere(struct binary *binary, const char *to_find, int align, bool must_find) {
     range_t range;
     for(int i = 0; (range = b_nth_segment(binary, i)).binary; i++) {
         addr_t result = find_data(range, to_find, align, false);
@@ -257,4 +254,185 @@ addr_t b_find_anywhere(struct binary *binary, char *to_find, int align, bool mus
     } else {
         return 0;
     }
+}
+
+struct findmany {
+    range_t range;
+    int num_patterns;
+    struct pattern {
+        int16_t buf[128];
+        ssize_t pattern_size, offset;
+        const char *name;
+        addr_t *result;
+    } *patterns;
+};
+
+struct findmany *findmany_init(range_t range) {
+    struct findmany *fm = malloc(sizeof(*fm));
+    fm->range = range;
+    fm->num_patterns = 0;
+    fm->patterns = NULL;
+    return fm;
+}
+
+void findmany_add(addr_t *result, struct findmany *fm, const char *to_find) {
+    if(fm->num_patterns >= 32) {
+        die("too many patterns");
+    }
+    fm->num_patterns++;
+    fm->patterns = realloc(fm->patterns, sizeof(struct pattern) * fm->num_patterns);
+    struct pattern *pat = &fm->patterns[fm->num_patterns - 1];
+
+    parse_pattern(to_find, pat->buf, &pat->pattern_size, &pat->offset);
+    pat->name = to_find;
+    pat->result = result;
+    *result = 0;
+}
+
+struct findmany2 {
+    struct node {
+        uint16_t next[16];
+        uint32_t terminates;
+    } *nodes;
+    uint8_t *index_paths;
+    uint16_t node_count;
+    struct node2 {
+        uint16_t next[16];
+    } *nodes2;
+    uint16_t node2_count;
+};
+
+static inline int find_or_create(void **restrict array, void *restrict cmp, uint16_t *restrict num_items, int item_size, uint16_t *restrict node) {
+    char *p = *array;
+    for(int j = 0; j < *num_items; j++) {
+        if(!memcmp(p, cmp, item_size)) {
+            *node = j;
+            return false;
+        }
+        p += item_size;
+    }
+    if(*num_items == 65535) {
+        die("welp");
+    }
+    *node = *num_items;
+    *array = realloc(*array, ++*num_items * item_size);
+    memcpy(*array + *node * item_size, cmp, item_size);
+    return true;
+}
+
+static uint16_t findmany_recurse(const struct findmany *restrict fm, struct findmany2 *restrict fm2, uint8_t *restrict cur_index_path) {
+    // this part is inefficient
+    uint16_t node;
+    if(!find_or_create((void **) &fm2->index_paths, cur_index_path, &fm2->node_count, fm->num_patterns, &node)) {
+        // it found an existing node
+        return node;
+    }
+    /*
+    printf("findmany_recurse: created node %d with cur_index_path = ", node);
+    for(int p = 0; p < fm->num_patterns; p++) {
+        printf(" %d", (int) cur_index_path[p]);
+    }
+    printf("\n");
+    */
+    memcpy(fm2->index_paths + node * fm->num_patterns, cur_index_path, fm->num_patterns);
+
+    fm2->nodes = realloc(fm2->nodes, fm2->node_count * sizeof(struct node));
+    struct node *nodep = &fm2->nodes[node];
+    
+    nodep->terminates = 0;
+    for(int p = 0; p < fm->num_patterns; p++) {
+        if(cur_index_path[p] == fm->patterns[p].pattern_size) {
+            nodep->terminates |= (1 << p);
+            cur_index_path[p] = 0;
+        }
+    }
+
+    autofree uint8_t *new_index_path = malloc(fm->num_patterns);
+    for(uint8_t hi = 0; hi < 16; hi++) {
+        struct node2 n2;
+        for(uint8_t lo = 0; lo < 16; lo++) {
+            uint8_t chr = hi * 16 + lo;
+
+            uint8_t orr = 0; // hack - a lot will point to 0
+
+            for(int p = 0; p < fm->num_patterns; p++) {
+                uint8_t idx = cur_index_path[p];
+                int16_t comp = fm->patterns[p].buf[idx];
+                if(comp == -1 || comp == chr) {
+                    idx++;
+                } else {
+                    idx = 0;    
+                }
+                new_index_path[p] = idx;
+                orr |= idx;
+            }
+
+            n2.next[lo] = orr ? findmany_recurse(fm, fm2, new_index_path) : 0;
+        }
+        nodep = &fm2->nodes[node];
+        find_or_create((void **) &fm2->nodes2, &n2, &fm2->node2_count, sizeof(struct node2), &nodep->next[hi]);
+    }
+
+    //printf("returning node %d\n", node);
+    return node;
+}
+
+void findmany_go(struct findmany *fm) {
+    struct findmany2 fm2;
+    memset(&fm2, 0, sizeof(fm2));
+    autofree uint8_t *cur_index_path = calloc(1, fm->num_patterns);
+#ifdef PROFILING
+    clock_t a = clock();
+#endif
+    findmany_recurse(fm, &fm2, cur_index_path);
+#ifdef PROFILING
+    clock_t b = clock();
+    printf("it took %d clocks to prepare the DFA\n", (int) (b - a));
+#endif
+
+    prange_t pr = rangeconv(fm->range);
+    uint8_t *start = pr.start;
+    struct node *cur = &fm2.nodes[0];
+    for(uint8_t *ptr = start; ptr < start + pr.size; ptr++) {
+        uint8_t chr = *ptr;
+
+        /*
+        printf("cur = %.3d", (int) (cur - fm2.nodes));
+        for(int p = 0; p < fm->num_patterns; p++) {
+            uint8_t idx = fm2.index_paths[(cur - fm2.nodes) * fm->num_patterns + p];
+            printf(" %d:%.2hhu(%04hx)", p, idx, fm->patterns[p].buf[idx]);
+        }
+        printf(" this char:%02hhx\n", chr);
+        */
+        
+
+        cur = &fm2.nodes[fm2.nodes2[cur->next[chr / 16]].next[chr % 16]];
+        if(cur->terminates) {
+            for(int p = 0, bit = 1; p < fm->num_patterns; p++, bit <<= 1) {
+                if(cur->terminates & bit) {
+                    struct pattern *pat = &fm->patterns[p];
+                    addr_t result = ptr - pat->pattern_size - start + fm->range.start + 1;
+                    if(*pat->result) {
+                        die("found [%s] multiple times in range: first at %08x then at %08x", pat->name, *pat->result, result);
+                    }
+                    *pat->result = result + pat->offset;
+                }
+
+            }
+        }
+    }
+    
+    free(fm2.index_paths); // could be done earlier
+    free(fm2.nodes);
+    free(fm2.nodes2);
+    
+    for(int p = 0; p < fm->num_patterns; p++) {
+        struct pattern *pat = &fm->patterns[p];
+        if(!*pat->result) {
+            die("didn't find [%s] in range(%x, %zx)", pat->name, fm->range.start, fm->range.size);
+        }
+    }
+
+    free(fm->patterns);
+    free(fm);
 }

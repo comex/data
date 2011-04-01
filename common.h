@@ -20,7 +20,10 @@
 #include <time.h>
 #endif
 
-static inline void _free_cleanup(void *p) { free(*((void **) p)); }
+static inline void _free_cleanup(void *pp) {
+    void *p = *((void **) pp);
+    if(p) free(p);
+}
 #define autofree __attribute__((cleanup(_free_cleanup)))
 
 __attribute__((unused)) static const char *_arg = MAP_FAILED;
