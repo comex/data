@@ -1,6 +1,11 @@
 #include "find.h"
 #include "binary.h"
 
+// Various links:
+// http://ridiculousfish.com/blog/archives/2006/05/30/old-age-and-treachery/
+// http://www-igm.univ-mlv.fr/~lecroq/string/tunedbm.html#SECTION00195
+// http://www-igm.univ-mlv.fr/~lecroq/string/node19.html#SECTION00190 (was using this)
+
 static addr_t find_data_raw(range_t range, int16_t *buf, ssize_t pattern_size, size_t offset, int align, bool must_find, const char *name) {
     // the problem with this is that it is faster to search for everything at once
     int8_t table[256];
