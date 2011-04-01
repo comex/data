@@ -2,18 +2,19 @@
 #include "binary.h"
 
 static addr_t find_data_raw(range_t range, int16_t *buf, ssize_t pattern_size, size_t offset, int align, bool must_find, const char *name) {
+    // the problem with this is that it would probably be faster to search for everything at once
     int8_t table[256];
     for(int c = 0; c < 256; c++) {
-        table[c] = pattern_size;
+        table[c] = pattern_size + 1;
     }
     for(int pos = 0; pos < pattern_size - 1; pos++) {
         if(buf[pos] == -1) {
             // Unfortunately, we can't put any character past being in this position...
             for(int i = 0; i < 256; i++) {
-                table[i] = pattern_size - pos - 1;
+                table[i] = pattern_size - pos;// - 1;
             }
         } else {
-            table[buf[pos]] = pattern_size - pos - 1;
+            table[buf[pos]] = pattern_size - pos;// - 1;
         }
     }
     // now, for each c, let x be the last position in the string, other than the final position, where c might appear, or -1 if it doesn't appear anywhere; table[i] is size - x - 1.
@@ -26,7 +27,7 @@ static addr_t find_data_raw(range_t range, int16_t *buf, ssize_t pattern_size, s
     uint8_t *start = pr.start + pattern_size - 1, *cursor = start;
     uint8_t *end = pr.start + pr.size;
     while(cursor < end) {
-        for(int i = 0; i >= (-pattern_size + 1); i--) {
+        for(int i = -1; i >= -pattern_size; i--) {
             if(buf[i] != -1 && cursor[i] != buf[i]) {
                 // Not a match
                 goto keep_going;

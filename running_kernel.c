@@ -294,7 +294,6 @@ void b_running_kernel_load_macho(struct binary *binary) {
     vm_size_t size;
     for(addr_t hugebase = 0x80000000; hugebase; hugebase += 0x40000000) {
         for(addr_t pagebase = 0x1000; pagebase < 0x10000; pagebase += 0x1000) {
-            // vm read, compare to MH_MAGIC, hurf durf
             mh_addr = (vm_address_t) (hugebase + pagebase);
             size = 0x1000;
             // This will return either KERN_PROTECTION_FAILURE if it's a good address, and KERN_INVALID_ADDRESS otherwise.
