@@ -7,7 +7,7 @@ static addr_t find_data_raw(range_t range, int16_t *buf, ssize_t pattern_size, s
     for(int c = 0; c < 256; c++) {
         table[c] = pattern_size + 1;
     }
-    for(int pos = 0; pos < pattern_size - 1; pos++) {
+    for(int pos = 0; pos < pattern_size; pos++) {
         if(buf[pos] == -1) {
             // Unfortunately, we can't put any character past being in this position...
             for(int i = 0; i < 256; i++) {
@@ -21,12 +21,12 @@ static addr_t find_data_raw(range_t range, int16_t *buf, ssize_t pattern_size, s
     // so if we got c but no match, we can skip ahead by table[i]
     // i.e. lame Boyer–Moore
     // I implemented the other half, but it actually made things /slower/
-    buf += pattern_size - 1;
+    buf += pattern_size;
     addr_t foundit = 0;
     prange_t pr = rangeconv(range);
-    uint8_t *start = pr.start + pattern_size - 1, *cursor = start;
+    uint8_t *start = pr.start + pattern_size, *cursor = start;
     uint8_t *end = pr.start + pr.size;
-    while(cursor < end) {
+    while(cursor <= end) {
         for(int i = -1; i >= -pattern_size; i--) {
             if(buf[i] != -1 && cursor[i] != buf[i]) {
                 // Not a match

@@ -14,12 +14,12 @@ else
 GCC ?= $(SDK_GCC)
 endif
 
-GCC += -g3 -std=gnu99 -Os -Wall -Wextra -Wno-parentheses -Werror
+GCC += -g3 -std=gnu99 -Os -Wall -Wextra -Wno-parentheses -Werror $(CFLAGS)
 ifneq ($(strip $(wildcard /usr/include/CommonCrypto)),)
 GCC += -DIMG3_SUPPORT -dead_strip
 endif
 AR ?= ar
 
-SETTINGS = $(NATIVE) $(GCC) $(CFLAGS)
+SETTINGS = $(NATIVE) $(GCC)
 .settings:
 	@if [ "`cat .settings0 2>/dev/null`" != "$(SETTINGS)" ]; then echo "$(SETTINGS)" > .settings0; make clean; fi
