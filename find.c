@@ -2,55 +2,81 @@
 #include "binary.h"
 
 static addr_t find_data_raw(range_t range, int16_t *buf, ssize_t pattern_size, size_t offset, int align, bool must_find, const char *name) {
-    // the problem with this is that it would probably be faster to search for everything at once
+    // the problem with this is that it is faster to search for everything at once
     int8_t table[256];
     for(int c = 0; c < 256; c++) {
-        table[c] = pattern_size + 1;
+        table[c] = pattern_size;
     }
     for(int pos = 0; pos < pattern_size; pos++) {
         if(buf[pos] == -1) {
             // Unfortunately, we can't put any character past being in this position...
             for(int i = 0; i < 256; i++) {
-                table[i] = pattern_size - pos;// - 1;
+                table[i] = pattern_size - pos - 1;
             }
         } else {
-            table[buf[pos]] = pattern_size - pos;// - 1;
+            table[buf[pos]] = pattern_size - pos - 1;
         }
     }
+
+    int8_t shift = table[pattern_size - 1];
+    table[pattern_size - 1] = 0;
+
     // now, for each c, let x be the last position in the string, other than the final position, where c might appear, or -1 if it doesn't appear anywhere; table[i] is size - x - 1.
     // so if we got c but no match, we can skip ahead by table[i]
-    // i.e. lame Boyer–Moore
-    // I implemented the other half, but it actually made things /slower/
-    buf += pattern_size;
+    // updated
+    buf += pattern_size - 1;
     addr_t foundit = 0;
     prange_t pr = rangeconv(range);
-    uint8_t *start = pr.start + pattern_size, *cursor = start;
+    uint8_t *start = pr.start + pattern_size - 1;
     uint8_t *end = pr.start + pr.size;
-    while(cursor <= end) {
-        for(int i = -1; i >= -pattern_size; i--) {
-            if(buf[i] != -1 && cursor[i] != buf[i]) {
-                // Not a match
-                goto keep_going;
-            }
-        }
-        // Whoa, we found it
-        addr_t new = cursor - start + range.start;
-        if(align && (new & (align - 1))) {
-            // Just kidding.
-            goto keep_going;
-        }
-        if(foundit) {
-            die("found [%s] multiple times in range: first at %08x then at %08x", name, foundit, new);
-        }
-        foundit = new;
-        if(align) {
-            break;
-        }
-        // otherwise, keep searching to make sure we won't find it again
-        keep_going:;
-        int jump = table[*cursor];
-        cursor += jump;
+    uint8_t *cutoff = end - 400;
+    uint8_t *cursor = start;
+
+#define GUTS(keep_going) \
+        for(int i = 0; i >= (-pattern_size + 1); i--) { \
+            if(buf[i] != -1 && cursor[i] != buf[i]) { \
+                /* Not a match */ \
+                goto keep_going; \
+            } \
+        } \
+        /* Whoa, we found it */ \
+        addr_t new = cursor - start + range.start; \
+        if(align && (new & (align - 1))) { \
+            /* Just kidding. */ \
+            goto keep_going; \
+        } \
+        if(foundit) { \
+            die("found [%s] multiple times in range: first at %08x then at %08x", name, foundit, new); \
+        } \
+        foundit = new; \
+        if(align) { \
+            goto done; \
+        } \
+        /* otherwise, keep searching to make sure we won't find it again */ \
+        keep_going: \
+        cursor += shift;
+
+    while(1) {
+        if(cursor >= cutoff) break;
+        uint8_t jump;
+        do {
+            jump = table[*cursor];
+            cursor += jump;
+            jump = table[*cursor];
+            cursor += jump;
+            jump = table[*cursor];
+            cursor += jump;
+            if(cursor >= end) goto done;
+        } while(jump);
+        GUTS(lbl1)
     }
+    if(cursor >= end) goto done;
+    while(1) {
+        cursor += table[*cursor];
+        if(cursor >= end) goto done;
+        GUTS(lbl2)
+    }
+    done:
     if(foundit) {
         return foundit + offset;
     } else if(must_find) {
