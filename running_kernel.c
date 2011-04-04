@@ -5,6 +5,7 @@
 #include "nlist.h"
 #include "fat.h"
 #include "link.h"
+#include "find.h"
 #include <assert.h>
 extern host_priv_t host_priv_self();
 // copied from xnu
@@ -118,8 +119,12 @@ uint32_t b_allocate_from_running_kernel(const struct binary *binary) {
 }
     
 
-void b_inject_into_running_kernel(const struct binary *to_load, uint32_t sysent) {
+void b_inject_into_running_kernel(struct binary *to_load, uint32_t sysent) {
+    // save sysent so unload can have it
+    to_load->mach_hdr->filetype = sysent;
+
     mach_port_t kernel_task = get_kernel_task();
+
     CMD_ITERATE(to_load->mach_hdr, cmd) {
         if(cmd->cmd == LC_SEGMENT) {
             struct segment_command *seg = (void *) cmd;
@@ -240,7 +245,7 @@ void unload_from_running_kernel(uint32_t addr) {
                 struct section *sect = &sections[i];
 
                 if((sect->flags & SECTION_TYPE) == S_MOD_TERM_FUNC_POINTERS) {
-                    uint32_t sysent = sect->reserved2; // hurf durf
+                    uint32_t sysent = hdr->filetype; // hurf durf
                     assert(sysent);
                     autofree void **things = malloc(sect->size);
                     kr_assert(vm_read_overwrite(kernel_task,
@@ -364,5 +369,13 @@ void b_running_kernel_load_macho(struct binary *binary) {
     b_macho_load_symbols(binary);
 }
  
+void b_prepare_running_kernel(const struct binary *binary) {
+    mach_port_t kernel_task = get_kernel_task();
+    bool four_dot_three = b_sym(binary, "_vfs_getattr", false, false);
+    uint32_t addy = b_read32(binary, b_sym(binary, "_kernel_pmap", false, true)) + (four_dot_three ? 0x424 : 0x420);
+    uint32_t zero = 0;
+    
+    assert(!vm_write(kernel_task, (vm_address_t) addy, (vm_offset_t) &zero, sizeof(zero)));
+}
 
 #endif

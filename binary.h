@@ -36,6 +36,8 @@ struct binary {
 
     struct binary *reexports;
     unsigned int reexport_count;
+
+    uint32_t reserved[4];
 };
 
 

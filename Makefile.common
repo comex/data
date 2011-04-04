@@ -1,4 +1,5 @@
-SDK_GCC = /Developer/Platforms/iPhoneOS.platform/Developer/usr/bin/gcc-4.2 -arch armv6 -isysroot /Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS4.3.sdk/ -mapcs-frame -fomit-frame-pointer -mthumb -fno-builtin-printf -fno-builtin-memset
+ARCH ?= armv6
+SDK_GCC = /Developer/Platforms/iPhoneOS.platform/Developer/usr/bin/gcc-4.2 -arch $(ARCH) -isysroot /Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS4.3.sdk/ -mapcs-frame -fomit-frame-pointer -mthumb -fno-builtin-printf -fno-builtin-memset
 
 NATIVE ?= 0
 DYNAMICLIB := -dynamiclib
