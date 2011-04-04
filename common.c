@@ -111,7 +111,7 @@ uint32_t parse_hex_uint32(char *string) {
     if(pr.size > 4) {
         die("too long hex string %s", string);
     }
-    uint32_t u;
+    uint32_t u = 0;
     memcpy(&u, pr.start, pr.size);
     free(pr.start);
     return swap32(u);
