@@ -26,7 +26,7 @@ static inline void _free_cleanup(void *pp) {
 }
 #define autofree __attribute__((cleanup(_free_cleanup)))
 
-__attribute__((unused)) static const char *_arg = MAP_FAILED;
+__attribute__((unused)) static const char *const _arg = MAP_FAILED;
 
 #define die(fmt, args...) ((_arg == MAP_FAILED) ? \
     _die("%s: " fmt "\n", __func__, ##args) : \
