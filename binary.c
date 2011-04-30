@@ -57,7 +57,12 @@ void b_init(struct binary *binary) {
 
 void b_macho_load_symbols(struct binary *binary) {
     CMD_ITERATE(binary->mach_hdr, cmd) {
-        if(cmd->cmd == LC_SYMTAB) {
+        if(cmd->cmd == LC_SEGMENT) {
+            struct segment_command *seg = (void *) cmd;
+            if(seg->fileoff == 0) {
+                binary->export_baseaddr = seg->vmaddr;
+            }
+        } else if(cmd->cmd == LC_SYMTAB) {
             struct symtab_command *scmd = (void *) cmd;
             if(scmd->nsyms >= 0x1000000) {
                 die("ridiculous number of symbols (%u)", scmd->nsyms);
@@ -117,7 +122,6 @@ void b_load_dyldcache(struct binary *binary, const char *path, bool rw) {
 void b_prange_load_dyldcache(struct binary *binary, prange_t pr, const char *name) {
 #define _arg name
     binary->valid = true;
-    binary->is_address_indexed = false;
     binary->valid_range = pr;
     binary->load_add = pr.start;
 
@@ -138,15 +142,6 @@ void b_prange_load_dyldcache(struct binary *binary, prange_t pr, const char *nam
         }
     }
 #undef _arg
-}
-
-void b_load_running_dyldcache(struct binary *binary, void *baseaddr) {
-    binary->valid = true;
-    binary->is_address_indexed = true;
-    binary->dyld_hdr = baseaddr;
-    binary->valid_range = (prange_t) {NULL, (size_t) -1};
-    binary->load_add = NULL;
-    do_dyld_hdr(binary);
 }
 
 void b_dyldcache_load_macho(const struct binary *binary, const char *filename, struct binary *out) {
@@ -201,8 +196,7 @@ void b_dyldcache_load_macho(const struct binary *binary, const char *filename, s
 
 static bool rangeconv_stuff(const struct binary *binary, addr_t addr, bool is_off, addr_t *out_address, addr_t *out_offset, size_t *out_size) {
 #define D \
-    addr_t dfield = is_off ? sfm->sfm_file_offset : sfm->sfm_address; \
-    addr_t diff = addr - dfield; \
+    addr_t diff = addr - (is_off ? sfm->sfm_file_offset : sfm->sfm_address); \
     if(diff < sfm->sfm_size) { \
         ((struct binary *) binary)->last_sfm = sfm; \
         *out_address = (addr_t)sfm->sfm_address + diff; \
@@ -211,8 +205,7 @@ static bool rangeconv_stuff(const struct binary *binary, addr_t addr, bool is_of
         return true; \
     }
 #define M \
-    addr_t mfield = is_off ? seg->fileoff : seg->vmaddr; \
-    addr_t diff = addr - mfield; \
+    addr_t diff = addr - (is_off ? seg->fileoff : seg->vmaddr); \
     if(diff < seg->filesize) { \
         ((struct binary *) binary)->last_seg = seg; \
         *out_address = (addr_t)seg->vmaddr + diff; \
@@ -248,40 +241,28 @@ static bool rangeconv_stuff(const struct binary *binary, addr_t addr, bool is_of
 #undef M
 }
 
-static inline void *b_add(const struct binary *binary, addr_t start) {
-    if(!binary->is_address_indexed && start == 0 && binary->mach_hdr) {
-        // dyld caches are weird.
-        return binary->mach_hdr;
-    }
-    return (char *) binary->load_add + start;
-}
-
-prange_t rangeconv_generic(range_t range, bool is_off) {
-    prange_t pr;
-    if(range.binary->is_address_indexed != is_off) {
-        pr = (prange_t) {b_add(range.binary, range.start), range.size};
-    } else {
-        addr_t address; addr_t offset; size_t size;
-            
-        if(rangeconv_stuff(range.binary, range.start, is_off, &address, &offset, &size)) {
-            pr = (prange_t) {b_add(range.binary, range.binary->is_address_indexed ? address : offset), range.size};
-        } else {    
-            goto bad;
-        }
-    }
-    if(prange_check(range.binary, pr)) {
-        return pr;
-    }
-    bad:
-    die("%s (%08x, %zx) not valid", is_off ? "offset range" : "range", range.start, range.size);
-}
-
 prange_t rangeconv(range_t range) {
-    return rangeconv_generic(range, false);
+    addr_t address; addr_t offset; size_t size;
+    if(rangeconv_stuff(range.binary, range.start, false, &address, &offset, &size)) {
+        return rangeconv_off((range_t) {range.binary, offset, range.size});
+    } else {    
+        die("range (%08x, %zx) not valid", range.start, range.size);
+    }
 }
 
 prange_t rangeconv_off(range_t range) {
-    return rangeconv_generic(range, true);
+    prange_t pr;
+    if(range.start == 0 && range.binary->mach_hdr && range.size < 0x10000) {
+        // dyld caches are weird.
+        pr.start = range.binary->mach_hdr;
+    } else {
+        pr.start = (char *) range.binary->load_add + range.start;
+    }
+    pr.size = range.size;
+    if(!prange_check(range.binary, pr)) {
+        die("offset range (%08x, %zx) not valid", range.start, range.size);
+    }
+    return pr;
 }
 
 bool prange_check(const struct binary *binary, prange_t range) {
@@ -307,7 +288,6 @@ range_t off_range_to_range(range_t range) {
 void b_prange_load_macho(struct binary *binary, prange_t pr, const char *name) {
 #define _arg name
     binary->valid = true;
-    binary->is_address_indexed = false;
     binary->load_add = pr.start;
     binary->valid_range = pr;
 
@@ -468,7 +448,10 @@ static addr_t trie_recurse(const struct binary *binary, void *ptr, char *start, 
                 }
                 return b_sym(&binary->reexports[address], name0, to_execute, false);
             }
-            return (addr_t) address;
+            if(!to_execute) {
+                address &= ~1;
+            }
+            return (addr_t) address + binary->export_baseaddr;
         }
     }
 
@@ -546,22 +529,9 @@ void b_macho_store(struct binary *binary, const char *path) {
     if(fd <= 0) {
         edie("unable to open");
     }
-    if(binary->is_address_indexed) {
-        CMD_ITERATE(binary->mach_hdr, cmd) {
-            if(cmd->cmd == LC_SEGMENT) {
-                struct segment_command *scmd = (void *) cmd;
-                lseek(fd, scmd->fileoff, SEEK_SET);
-                ssize_t result = write(fd, ((char *) binary->load_add) + scmd->vmaddr, scmd->filesize);
-                if(result < 0 || result != (ssize_t)scmd->filesize) {
-                    edie("couldn't write segment data");
-                }
-            }
-        }
-    } else {
-        ssize_t result = write(fd, binary->valid_range.start, binary->valid_range.size);
-        if(result < 0 || result != (ssize_t)binary->valid_range.size) {
-            edie("couldn't write whole file");
-        }
+    ssize_t result = write(fd, binary->valid_range.start, binary->valid_range.size);
+    if(result < 0 || result != (ssize_t)binary->valid_range.size) {
+        edie("couldn't write whole file");
     }
     close(fd);
 #undef _arg

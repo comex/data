@@ -277,19 +277,11 @@ void unload_from_running_kernel(uint32_t addr) {
 void b_running_kernel_load_macho(struct binary *binary) {
     kern_return_t kr;
 
-    mach_port_name_t kernel_task;
-    kr = task_for_pid(mach_task_self(), 0, &kernel_task);
-    if(kr) {
-        die("task_for_pid failed.  u probably need kernel patches. kr=%d", kr);
-    }
+    mach_port_t kernel_task = get_kernel_task();
 
-    binary->valid = true;
-    binary->is_address_indexed = true;
-    binary->mach_hdr = malloc(0x1000);
+    char hdr_buf[0xfff];
+    struct mach_header *const hdr = (void *) hdr_buf;
     
-    if(kr) {
-        die("vm_allocate mach_hdr failed");
-    }
     addr_t mh_addr;
     vm_size_t size;
     for(addr_t hugebase = 0x80000000; hugebase; hugebase += 0x40000000) {
@@ -299,7 +291,7 @@ void b_running_kernel_load_macho(struct binary *binary) {
             // This will return either KERN_PROTECTION_FAILURE if it's a good address, and KERN_INVALID_ADDRESS otherwise.
             // But if we use a shorter size, it will read if it's a good address, and /crash/ otherwise.
             // So we do two.
-            kr = vm_read_overwrite(kernel_task, (vm_address_t) mh_addr, size, (vm_address_t) binary->mach_hdr, &size);
+            kr = vm_read_overwrite(kernel_task, (vm_address_t) mh_addr, size, (vm_address_t) hdr_buf, &size);
             if(kr == KERN_INVALID_ADDRESS) {
                 continue;
             } else if(kr && kr != KERN_PROTECTION_FAILURE) {
@@ -307,8 +299,8 @@ void b_running_kernel_load_macho(struct binary *binary) {
             }
             // ok, it's valid, but is it the actual header?
             size = 0xfff;
-            kr_assert(vm_read_overwrite(kernel_task, (vm_address_t) mh_addr, size, (vm_address_t) binary->mach_hdr, &size));
-            if(binary->mach_hdr->magic == MH_MAGIC) {
+            kr_assert(vm_read_overwrite(kernel_task, (vm_address_t) mh_addr, size, (vm_address_t) hdr_buf, &size));
+            if(hdr->magic == MH_MAGIC) {
                 printf("found running kernel at 0x%08x\n", mh_addr);
                 goto ok;
             }
@@ -323,45 +315,37 @@ void b_running_kernel_load_macho(struct binary *binary) {
     if(binary->mach_hdr->sizeofcmds > size - sizeof(*binary->mach_hdr)) {
         die("sizeofcmds is too big");
     }
-    addr_t maxaddr = mh_addr;
+    addr_t maxoff = 0;
     CMD_ITERATE(binary->mach_hdr, cmd) {
         if(cmd->cmd == LC_SEGMENT) {
             struct segment_command *scmd = (void *) cmd;
-            addr_t newmax = scmd->vmaddr + scmd->filesize;
-            if(newmax > maxaddr) maxaddr = newmax;
+            addr_t newmax = scmd->fileoff + scmd->filesize;
+            if(newmax > maxoff) maxoff = newmax;
         }
     }
 
-    if(maxaddr < mh_addr + 0x1000) {
-        die("too small maxaddr %u\n", maxaddr);
+    char *buf = malloc(maxoff);
+
+    CMD_ITERATE(binary->mach_hdr, cmd) {
+        if(cmd->cmd == LC_SEGMENT) {
+            struct segment_command *scmd = (void *) cmd;
+            addr_t off = scmd->fileoff;
+            addr_t addr = scmd->vmaddr;
+            vm_size_t size = scmd->filesize;
+            // Well, uh, this sucks.  But there's some block on reading.  In fact, it's probably a bug that this works.
+            while(size > 0) {
+                vm_size_t this_size = (vm_size_t) size;
+                if(this_size > 0xfff) this_size = 0xfff;
+                kr_assert(vm_read_overwrite(kernel_task, (vm_address_t) addr, this_size, (vm_address_t) (buf + off), &this_size));
+
+                off += this_size;
+                addr += this_size;
+                size -= this_size;
+            }
+        }
     }
 
-    // Well, uh, this sucks.  But there's some block on reading.  In fact, it's probably a bug that this works.
-    size_t read_size = maxaddr - mh_addr;
-    char *p = malloc(read_size);
-    binary->load_add = p - 0x1000;
-    binary->valid_range = (prange_t) {p, read_size};
-#ifdef PROFILING
-    clock_t a = clock();
-#endif
-    while(read_size > 0) {
-        vm_size_t this_size = (vm_size_t) read_size;
-        if(this_size > 0xfff) this_size = 0xfff;
-        kr_assert(vm_read_overwrite(kernel_task, (vm_address_t) mh_addr, this_size, (vm_address_t) p, &this_size));
-        mh_addr += this_size;
-        p += this_size;
-        read_size -= this_size;
-    }
-    mach_port_deallocate(mach_task_self(), kernel_task);
-#ifdef PROFILING
-    clock_t b = clock();
-    printf("it took %d clocks to read the kernel\n", (int)(b - a));
-#endif
-
-    free(binary->mach_hdr);
-    binary->mach_hdr = (void *) p;
-
-    b_macho_load_symbols(binary);
+    b_prange_load_macho(binary, (prange_t) {buf, maxoff}, "<running kernel>");    
 }
  
 
