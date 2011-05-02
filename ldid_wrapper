@@ -5,10 +5,10 @@ for last; do
     ldid="$ldid $old"
     old="$last"
 done
-archs="$(lipo -info "$last" | sed 's/^.*are: //')"
-if [ -z "$archs" ]; then
+if [ -z "$(echo $archs | grep are:)" ]; then
     $ldid "$last"
 else
+    archs="$(echo $archs | sed 's/^.*are: //')"
     temp=$(mktemp -d /tmp/ldid_wrapper.XXXXX)
     for arch in $archs; do
         lipo -thin $arch -output $temp/$arch "$last"
