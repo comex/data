@@ -1,15 +1,19 @@
 include Makefile.common
-all: .settings libdata.a libdata.$(DYLIB)
+all: $(OUTDIR) $(OUTDIR)/libdata.a $(OUTDIR)/libdata.$(DYLIB)
 
-%.o: %.c *.h
+$(OUTDIR):
+	mkdir $(OUTDIR)
+clean: .clean
+
+$(OUTDIR)/%.o: %.c *.h
 	$(GCC) -c -o $@ $< -Wreturn-type                              
 
 OBJS := common.o binary.o running_kernel.o link.o find.o cc.o lzss.o 
-libdata.a: $(OBJS)
+OBJS := $(patsubst %,$(OUTDIR)/%,$(OBJS))
+
+$(OUTDIR)/libdata.a: $(OBJS)
 	rm -f $@
 	$(AR) rcs $@ $(OBJS)
-libdata.$(DYLIB): $(OBJS)
+$(OUTDIR)/libdata.$(DYLIB): $(OBJS)
 	$(GCC) $(DYNAMICLIB) -o $@ $(OBJS)
 
-clean:
-	rm -f *.o libdata.a

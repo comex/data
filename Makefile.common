@@ -1,26 +1,29 @@
-ARCH ?= armv6
-SDK_GCC = /Developer/Platforms/iPhoneOS.platform/Developer/usr/bin/gcc-4.2 -arch $(ARCH) -isysroot /Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS4.3.sdk/ -mapcs-frame -fomit-frame-pointer -mthumb -fno-builtin-printf -fno-builtin-memset
+BUILD ?= arm_universal
+OUTDIR = $(BUILD)
 
-NATIVE ?= 0
-DYNAMICLIB := -dynamiclib
-DYLIB := dylib
-ifeq "$(NATIVE)" "1"
 ifeq "$(wildcard /private)" ""
-DYNAMICLIB := -shared
-DYLIB := so
+DYNAMICLIB = -shared
+DYLIB = so
 else
-GCC ?= gcc -arch i386 -arch x86_64
-endif
-else
-GCC ?= $(SDK_GCC)
+DYNAMICLIB  = -dynamiclib
+DYLIB = dylib
+CFLAGS += -DIMG3_SUPPORT -dead_strip
 endif
 
-GCC += -g3 -std=gnu99 -Os -Wall -Wextra -Wno-parentheses -Wimplicit -Werror $(CFLAGS)
-ifneq ($(strip $(wildcard /usr/include/CommonCrypto)),)
-GCC += -DIMG3_SUPPORT -dead_strip
-endif
+CFLAGS += -gstabs -std=gnu99 -Os -Wall -Wextra -Wno-parentheses -Wimplicit -Werror
+
+SDK_GCC = /Developer/Platforms/iPhoneOS.platform/Developer/usr/bin/gcc-4.2 -isysroot /Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS4.3.sdk/ -mapcs-frame -fomit-frame-pointer -mthumb -fno-builtin-printf -fno-builtin-memset
+
+GCC_native = gcc
+GCC_universal = gcc -arch i386 -arch x86_64
+GCC_armv6 = $(SDK_GCC) -arch armv6
+GCC_armv7 = $(SDK_GCC) -arch armv7
+GCC_arm_universal = $(SDK_GCC) -arch armv6 -arch armv7
+
+GCC ?= $(GCC_$(BUILD))
+GCC += $(CFLAGS)
 AR ?= ar
 
-SETTINGS = $(NATIVE) $(GCC)
-.settings:
-	@if [ "`cat .settings0 2>/dev/null`" != "$(SETTINGS)" ]; then echo "$(SETTINGS)" > .settings0; make clean; fi
+.clean:
+	rm -rf native universal armv6 armv7 arm_universal
+
