@@ -23,7 +23,9 @@ GCC_arm_universal = $(SDK_GCC) -arch armv6 -arch armv7
 GCC ?= $(GCC_$(BUILD))
 GCC += $(CFLAGS)
 AR ?= ar
-LDID = $(findstring $(BUILD),armv6 armv7 arm_universal)
+ifneq "$(findstring $(BUILD),armv6 armv7 arm_universal)" ""
+LDID = $(CURDIR)/ldid_wrapper
+endif
 
 $(OUTDIR)/%.o: %.c *.h
 	$(GCC) -c -o $@ $<

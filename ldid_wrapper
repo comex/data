@@ -1,0 +1,19 @@
+#!/bin/sh
+for last; do
+    ldid_args="$ldid_args $old"
+    old="$last"
+done
+archs="$(lipo -info "$last" | sed 's/^.*are: //')"
+if [ -z "$archs" ]; then
+    ldid $ldid_args "$last"
+else
+    temp=$(mktemp -d /tmp/ldid_wrapper.XXXXX)
+    for arch in $archs; do
+        lipo -thin $arch -output $temp/$arch "$last"
+        ldid -S $temp/$arch
+    done
+    lipo -create -output "$last" $temp/*
+    rm -rf $temp
+fi
+        
+
