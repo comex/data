@@ -5,9 +5,6 @@ $(OUTDIR):
 	mkdir $(OUTDIR)
 clean: .clean
 
-$(OUTDIR)/%.o: %.c *.h
-	$(GCC) -c -o $@ $< -Wreturn-type                              
-
 OBJS := common.o binary.o running_kernel.o link.o find.o cc.o lzss.o 
 OBJS := $(patsubst %,$(OUTDIR)/%,$(OBJS))
 

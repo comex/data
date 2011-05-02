@@ -10,9 +10,9 @@ DYLIB = dylib
 CFLAGS += -DIMG3_SUPPORT -dead_strip
 endif
 
-CFLAGS += -gstabs -std=gnu99 -Os -Wall -Wextra -Wno-parentheses -Wimplicit -Werror
+CFLAGS += -gstabs -std=gnu99 -Os -Wall -Wextra -Wno-parentheses -Wimplicit -Werror -Wreturn-type
 
-SDK_GCC = /Developer/Platforms/iPhoneOS.platform/Developer/usr/bin/gcc-4.2 -isysroot /Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS4.3.sdk/ -mapcs-frame -fomit-frame-pointer -mthumb -fno-builtin-printf -fno-builtin-memset
+SDK_GCC = /Developer/Platforms/iPhoneOS.platform/Developer/usr/bin/gcc-4.2 -isysroot /Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS4.3.sdk/ -mapcs-frame -fomit-frame-pointer -mthumb
 
 GCC_native = gcc
 GCC_universal = gcc -arch i386 -arch x86_64
@@ -23,6 +23,10 @@ GCC_arm_universal = $(SDK_GCC) -arch armv6 -arch armv7
 GCC ?= $(GCC_$(BUILD))
 GCC += $(CFLAGS)
 AR ?= ar
+LDID = $(findstring $(BUILD),armv6 armv7 arm_universal)
+
+$(OUTDIR)/%.o: %.c *.h
+	$(GCC) -c -o $@ $<
 
 .clean:
 	rm -rf native universal armv6 armv7 arm_universal
