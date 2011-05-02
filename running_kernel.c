@@ -38,7 +38,7 @@ kern_return_t kr_assert_(kern_return_t kr, const char *name, int line) {
 }
 #define kr_assert(x) kr_assert_((x), #x, __LINE__)
 
-static mach_port_t get_kernel_task() {
+mach_port_t get_kernel_task() {
     static mach_port_t kernel_task;
     if(!kernel_task) {
         kr_assert(task_for_pid(mach_task_self(), 0, &kernel_task));
@@ -367,15 +367,7 @@ void b_running_kernel_load_macho(struct binary *binary) {
     binary->mach_hdr = (void *) p;
 
     b_macho_load_symbols(binary);
-}
- 
-void b_prepare_running_kernel(const struct binary *binary) {
-    mach_port_t kernel_task = get_kernel_task();
-    bool four_dot_three = b_sym(binary, "_vfs_getattr", false, false);
-    uint32_t addy = b_read32(binary, b_sym(binary, "_kernel_pmap", false, true)) + (four_dot_three ? 0x424 : 0x420);
-    uint32_t zero = 0;
-    
-    assert(!vm_write(kernel_task, (vm_address_t) addy, (vm_offset_t) &zero, sizeof(zero)));
+
 }
 
 #endif

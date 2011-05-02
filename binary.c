@@ -43,6 +43,9 @@ static void b_verify_macho(const struct binary *binary) {
         case LC_DYLD_INFO_ONLY:
             required = sizeof(struct dyld_info_command);
             break;
+        case LC_ID_DYLIB:
+            required = sizeof(struct dylib_command);
+            break;
         }
 
         if(cmd->cmdsize < required) {
