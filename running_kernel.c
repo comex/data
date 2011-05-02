@@ -5,6 +5,7 @@
 #include "nlist.h"
 #include "fat.h"
 #include "link.h"
+#include "find.h"
 #include <assert.h>
 extern host_priv_t host_priv_self();
 // copied from xnu
@@ -37,7 +38,7 @@ kern_return_t kr_assert_(kern_return_t kr, const char *name, int line) {
 }
 #define kr_assert(x) kr_assert_((x), #x, __LINE__)
 
-static mach_port_t get_kernel_task() {
+mach_port_t get_kernel_task() {
     static mach_port_t kernel_task;
     if(!kernel_task) {
         kr_assert(task_for_pid(mach_task_self(), 0, &kernel_task));
@@ -118,8 +119,12 @@ uint32_t b_allocate_from_running_kernel(const struct binary *binary) {
 }
     
 
-void b_inject_into_running_kernel(const struct binary *to_load, uint32_t sysent) {
+void b_inject_into_running_kernel(struct binary *to_load, uint32_t sysent) {
+    // save sysent so unload can have it
+    to_load->mach_hdr->filetype = sysent;
+
     mach_port_t kernel_task = get_kernel_task();
+
     CMD_ITERATE(to_load->mach_hdr, cmd) {
         if(cmd->cmd == LC_SEGMENT) {
             struct segment_command *seg = (void *) cmd;
@@ -240,7 +245,7 @@ void unload_from_running_kernel(uint32_t addr) {
                 struct section *sect = &sections[i];
 
                 if((sect->flags & SECTION_TYPE) == S_MOD_TERM_FUNC_POINTERS) {
-                    uint32_t sysent = sect->reserved2; // hurf durf
+                    uint32_t sysent = hdr->filetype; // hurf durf
                     assert(sysent);
                     autofree void **things = malloc(sect->size);
                     kr_assert(vm_read_overwrite(kernel_task,
@@ -347,6 +352,5 @@ void b_running_kernel_load_macho(struct binary *binary) {
 
     b_prange_load_macho(binary, (prange_t) {buf, maxoff}, "<running kernel>");    
 }
- 
 
 #endif

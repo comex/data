@@ -268,7 +268,6 @@ addr_t find_bl(range_t *range) {
     return 0;
     ok:;
     addr_t baseaddr = ((char *) base) - ((char *) pr.start) + range->start + 4;
-    printf("%08x\n", baseaddr);
     range->start = baseaddr + thumb;
     if(diff & 0x800000) diff |= 0xff000000;
     return baseaddr + diff;

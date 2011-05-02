@@ -7,16 +7,6 @@
 #include <assert.h>
 #include <ctype.h>
 
-// shouldn't be here
-uint32_t b_find_sysent(const struct binary *binary) {
-    static const struct binary *last_binary; static uint32_t last_sysent;
-    if(last_binary != binary) {
-        last_binary = binary;
-        last_sysent = find_int32(b_macho_segrange(binary, "__DATA"), 0x861000, true) + 4;
-    }
-    return last_sysent;
-}
-
 static uint32_t b_lookup_nlist(const struct binary *load, const struct binary *target, lookupsym_t lookup_sym, uint32_t symbolnum) {
     struct nlist *nl = load->symtab + symbolnum;
     bool weak = nl->n_desc & N_WEAK_REF;
@@ -131,12 +121,9 @@ void b_relocate(struct binary *load, const struct binary *target, lookupsym_t lo
                     }
                     break;
                 }
-                case S_MOD_TERM_FUNC_POINTERS:
-                    // XXX: be helpful for the unload later
-                    sect->reserved2 = lookup_sym(target, "sysent");
-                    break;
                 case S_ZEROFILL:
                 case S_MOD_INIT_FUNC_POINTERS:
+                case S_MOD_TERM_FUNC_POINTERS:
                 case S_REGULAR:
                 case S_SYMBOL_STUBS:
                 case S_CSTRING_LITERALS:

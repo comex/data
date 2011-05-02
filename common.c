@@ -30,34 +30,44 @@ bool is_valid_range(prange_t range) {
     return !mincore(range.start, range.size, (void *) &c);
 }
 
-static inline bool parse_hex_digit(char digit, uint8_t *result) {
-    if(digit >= '0' && digit <= '9') {
-        *result = digit - '0';
-        return true;
-    } else if(digit >= 'a' && digit <= 'f') {
-        *result = 10 + (digit - 'a');
-        return true;
+static inline char parse_hex_digit(char digit, const char *string) {
+    switch(digit) {
+    case '0' ... '9':
+        return digit - '0';
+    case 'a' ... 'f':
+        return 10 + (digit - 'a');
+    default:
+        die("bad hex string %s", string);
     }
-    return false;
 }
 
 prange_t parse_hex_string(const char *string) {
+    if(string[0] == '0' && string[1] == 'x') {
+        string += 2;
+    }
+    const char *in = string;
     size_t len = strlen(string);
-    if(len % 2) goto bad;
-    len /= 2;
-    uint8_t *buf = malloc(len);
-    prange_t result = (prange_t) {buf, len};
-    while(len--) {
-        char first = *string++;
-        char second = *string++;
-        uint8_t a, b;
-        if(!parse_hex_digit(first, &a)) goto bad;
-        if(!parse_hex_digit(second, &b)) goto bad;
-        *buf++ = (a * 0x10) + b;
+    size_t out_len = (len + 1)/2;
+    uint8_t *out = malloc(out_len);
+    prange_t result = (prange_t) {out, out_len};
+    if(len % 2) {
+        *out++ = parse_hex_digit(*in++, string);
+    }
+    while(out_len--) {
+        uint8_t a = parse_hex_digit(*in++, string);
+        uint8_t b = parse_hex_digit(*in++, string);
+        *out++ = (a * 0x10) + b;
     }
     return result;
-    bad:
-    die("bad hex string %s", string);
+}
+
+uint32_t parse_hex_uint32(const char *string) {
+    char *end;
+    uint32_t result = (uint32_t) strtoll(string, &end, 16);
+    if(!*string || *end) {
+        die("invalid hex value %x", string);
+    }
+    return result;
 }
 
 prange_t load_file(const char *filename, bool rw, mode_t *mode) {
@@ -103,17 +113,6 @@ void store_file(prange_t range, const char *filename, mode_t mode) {
     }
     close(fd);
 #undef _arg
-}
-
-uint32_t parse_hex_uint32(char *string) {
-    prange_t pr = parse_hex_string(string);
-    if(pr.size > 4) {
-        die("too long hex string %s", string);
-    }
-    uint32_t u = 0;
-    memcpy(&u, pr.start, pr.size);
-    free(pr.start);
-    return swap32(u);
 }
 
 #if defined(__GNUC__) && !defined(__clang__) && !defined(__arm__)
