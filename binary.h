@@ -10,7 +10,6 @@ struct binary {
     int actual_cpusubtype;
     void *load_add;
     prange_t valid_range;
-    bool is_address_indexed;
 
     struct dyld_cache_header *dyld_hdr;
     uint32_t dyld_mapping_count;
@@ -29,6 +28,7 @@ struct binary {
 
     // alternatively
     prange_t export_trie;
+    addr_t export_baseaddr;
 
     char *strtab;
     uint32_t strsize;
@@ -50,7 +50,6 @@ void b_init(struct binary *binary);
 
 void b_load_dyldcache(struct binary *binary, const char *path, bool rw);
 void b_prange_load_dyldcache(struct binary *binary, prange_t range, const char *name);
-void b_load_running_dyldcache(struct binary *binary, void *baseaddr);
 void b_dyldcache_load_macho(const struct binary *binary, const char *filename, struct binary *out);
 
 void b_macho_load_symbols(struct binary *binary);

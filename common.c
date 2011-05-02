@@ -4,7 +4,6 @@
 #include <sys/types.h>
 #include <sys/mman.h>
 #include <stdarg.h>
-#include <setjmp.h>
 
 prange_t pdup(prange_t range) {
     void *buf = malloc(range.size);
@@ -116,18 +115,45 @@ void store_file(prange_t range, const char *filename, mode_t mode) {
 #undef _arg
 }
 
-static jmp_buf die_handler;
-static bool die_handler_valid;
-static char die_message[256];
+#if defined(__GNUC__) && !defined(__clang__) && !defined(__arm__)
+#define EXCEPTION_SUPPORT 1
+#endif
+
+// Basically, ctypes/libffi is very fancy but does not support using setjmp() as an exception mechanism.  Running setjmp() directly from Python is... not effective, as you might expect.  So here's an unnecessarily portable hack.
+
+#ifdef EXCEPTION_SUPPORT
+#include <setjmp.h>
+#include <pthread.h>
+
+static bool call_going;
+static void *call_func;
+static jmp_buf call_jmp;
+static char call_error[256];
+
+void data_call_init(void *func) {
+    call_func = func;
+    call_going = true;
+    call_error[0] = 0;
+}
+
+void data_call(__unused int whatever, ...) {
+    if(!setjmp(call_jmp)) {
+        __builtin_return(__builtin_apply(call_func, __builtin_apply_args(), 32));
+    }
+}
+
+char *data_call_fini() {
+    call_going = false;
+    return call_error;
+}
 
 void _die(const char *fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
-
-    if(die_handler_valid) {
-        die_handler_valid = false;
-        vsnprintf(die_message, sizeof(die_message), fmt, ap);
-        longjmp(die_handler, -1);
+    
+    if(call_going) {
+        vsnprintf(call_error, sizeof(call_error), fmt, ap);
+        longjmp(call_jmp, -1);
     } else {
         vfprintf(stderr, fmt, ap);
         abort();
@@ -136,13 +162,12 @@ void _die(const char *fmt, ...) {
     va_end(ap);
 }
 
-const char *data_try(void (*func)()) {
-    if(setjmp(die_handler)) {
-        return die_message;
-    } else {
-        die_handler_valid = true;
-        func();
-        die_handler_valid = false;
-        return NULL;
-    }
+#else
+void _die(const char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    vfprintf(stderr, fmt, ap);
+    abort();
+    va_end(ap);
 }
+#endif
