@@ -26,7 +26,7 @@ static inline void _free_cleanup(void *pp) {
 }
 #define autofree __attribute__((cleanup(_free_cleanup)))
 
-__attribute__((unused)) static const char *_arg = MAP_FAILED;
+__attribute__((unused)) static const char *const _arg = MAP_FAILED;
 
 #define die(fmt, args...) ((_arg == MAP_FAILED) ? \
     _die("%s: " fmt "\n", __func__, ##args) : \
@@ -54,6 +54,6 @@ prange_t load_fd(int fd, bool rw);
 
 void store_file(prange_t range, const char *filename, mode_t mode);
 
-uint32_t parse_hex_uint32(char *string);
+uint32_t parse_hex_uint32(const char *string);
 
 __attribute__((noreturn)) void _die(const char *fmt, ...);
