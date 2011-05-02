@@ -23,9 +23,11 @@ GCC_arm_universal = $(SDK_GCC) -arch armv6 -arch armv7
 GCC ?= $(GCC_$(BUILD))
 GCC += $(CFLAGS)
 AR ?= ar
-ifneq "$(findstring $(BUILD),armv6 armv7 arm_universal)" ""
+ifneq "$(filter $(BUILD),armv6 armv7 arm_universal)" ""
 DATADIR = $(dir $(lastword $(MAKEFILE_LIST)))
 LDID = $(DATADIR)/ldid_wrapper
+else
+LDID =
 endif
 
 $(OUTDIR)/%.o: %.c *.h
@@ -34,3 +36,5 @@ $(OUTDIR)/%.o: %.c *.h
 .clean:
 	rm -rf native universal armv6 armv7 arm_universal
 
+.data:
+	make -C $(DATA) BUILD=$(BUILD)
