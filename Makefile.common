@@ -24,7 +24,8 @@ GCC ?= $(GCC_$(BUILD))
 GCC += $(CFLAGS)
 AR ?= ar
 ifneq "$(findstring $(BUILD),armv6 armv7 arm_universal)" ""
-LDID = $(CURDIR)/ldid_wrapper
+DATADIR = $(dir $(lastword $(MAKEFILE_LIST)))
+LDID = $(DATADIR)/ldid_wrapper
 endif
 
 $(OUTDIR)/%.o: %.c *.h
