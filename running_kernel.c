@@ -343,8 +343,8 @@ void b_running_kernel_load_macho(struct binary *binary) {
                 if(this_size > 0xfff) this_size = 0xfff;
                 kr_assert(vm_read_overwrite(kernel_task, (vm_address_t) addr, this_size, (vm_address_t) (buf + off), &this_size));
 
-                off += this_size;
-                addr += this_size;
+                off += (addr_t) this_size;
+                addr += (addr_t) this_size;
                 size -= this_size;
             }
         }

@@ -30,12 +30,12 @@ bool is_valid_range(prange_t range) {
     return !mincore(range.start, range.size, (void *) &c);
 }
 
-static inline char parse_hex_digit(char digit, const char *string) {
+static inline uint8_t parse_hex_digit(char digit, const char *string) {
     switch(digit) {
     case '0' ... '9':
-        return digit - '0';
+        return (uint8_t) (digit - '0');
     case 'a' ... 'f':
-        return 10 + (digit - 'a');
+        return (uint8_t) (10 + (digit - 'a'));
     default:
         die("bad hex string %s", string);
     }
@@ -56,7 +56,7 @@ prange_t parse_hex_string(const char *string) {
     while(out_len--) {
         uint8_t a = parse_hex_digit(*in++, string);
         uint8_t b = parse_hex_digit(*in++, string);
-        *out++ = (a * 0x10) + b;
+        *out++ = (uint8_t) ((a * 0x10) + b);
     }
     return result;
 }

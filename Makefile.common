@@ -7,10 +7,10 @@ DYLIB = so
 else
 DYNAMICLIB  = -dynamiclib
 DYLIB = dylib
-CFLAGS += -DIMG3_SUPPORT -dead_strip
+override CFLAGS += -DIMG3_SUPPORT -dead_strip
 endif
 
-CFLAGS += -gstabs -std=gnu99 -Os -Wall -Wextra -Wno-parentheses -Wimplicit -Werror -Wreturn-type
+override CFLAGS += -gstabs -std=gnu99 -Os -Wall -Wextra -Wno-parentheses -Wimplicit -Werror -Wreturn-type
 
 SDK_GCC = /Developer/Platforms/iPhoneOS.platform/Developer/usr/bin/gcc-4.2 -isysroot /Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS4.3.sdk/ -mapcs-frame -fomit-frame-pointer -mthumb
 
@@ -21,7 +21,7 @@ GCC_armv7 = $(SDK_GCC) -arch armv7
 GCC_arm_universal = $(SDK_GCC) -arch armv6 -arch armv7
 
 GCC ?= $(GCC_$(BUILD))
-GCC += $(CFLAGS)
+override GCC += $(CFLAGS)
 AR ?= ar
 ifneq "$(findstring $(BUILD),armv6 armv7 arm_universal)" ""
 DATADIR = $(dir $(lastword $(MAKEFILE_LIST)))

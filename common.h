@@ -6,6 +6,7 @@
 //#define PROFILING
 
 #define swap32 __builtin_bswap32
+#define SWAP32(x) ((typeof(x)) swap32((uint32_t) (x)))
 
 #include <stdio.h>
 #include <string.h>

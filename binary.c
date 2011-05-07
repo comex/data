@@ -162,7 +162,7 @@ void b_dyldcache_load_macho(const struct binary *binary, const char *filename, s
     }
 
     for(unsigned int i = 0; i < binary->dyld_hdr->imagesCount; i++) {
-        struct dyld_cache_image_info *info = rangeconv_off((range_t) {binary, binary->dyld_hdr->imagesOffset + i * sizeof(*info), sizeof(*info)}).start;
+        struct dyld_cache_image_info *info = rangeconv_off((range_t) {binary, binary->dyld_hdr->imagesOffset + (addr_t) (i * sizeof(*info)), sizeof(*info)}).start;
         char *name = rangeconv_off((range_t) {binary, info->pathFileOffset, 128}).start;
 
         if(strncmp(name, filename, 128)) {
@@ -170,7 +170,7 @@ void b_dyldcache_load_macho(const struct binary *binary, const char *filename, s
         }
         // we found it
         // XXX out->mach_hdr = verify_macho(b_extend_prange(binary, 
-        out->mach_hdr = rangeconv((range_t) {binary, info->address, 0}).start;
+        out->mach_hdr = rangeconv((range_t) {binary, (uint32_t) info->address, 0}).start;
         b_verify_macho(out);
         
         // look for reexports (maybe blowing the stack)
@@ -179,8 +179,8 @@ void b_dyldcache_load_macho(const struct binary *binary, const char *filename, s
             if(cmd->cmd == LC_REEXPORT_DYLIB) count++;
         }
         if(count > 0 && count < 10000) {
-            out->reexport_count = count;
-            struct binary *p = out->reexports = malloc(count * sizeof(struct binary));
+            out->reexport_count = (unsigned int) count;
+            struct binary *p = out->reexports = malloc(out->reexport_count * sizeof(struct binary));
             CMD_ITERATE(out->mach_hdr, cmd) {
                 if(cmd->cmd == LC_REEXPORT_DYLIB) {
                     struct dylib *dylib = &((struct dylib_command *) cmd)->dylib;
@@ -199,7 +199,7 @@ void b_dyldcache_load_macho(const struct binary *binary, const char *filename, s
 
 static bool rangeconv_stuff(const struct binary *binary, addr_t addr, bool is_off, addr_t *out_address, addr_t *out_offset, size_t *out_size) {
 #define D \
-    addr_t diff = addr - (is_off ? sfm->sfm_file_offset : sfm->sfm_address); \
+    addr_t diff = addr - (addr_t) (is_off ? sfm->sfm_file_offset : sfm->sfm_address); \
     if(diff < sfm->sfm_size) { \
         ((struct binary *) binary)->last_sfm = sfm; \
         *out_address = (addr_t)sfm->sfm_address + diff; \
@@ -308,14 +308,14 @@ void b_prange_load_macho(struct binary *binary, prange_t pr, const char *name) {
         }
         struct fat_header *fathdr = pr.start;
         struct fat_arch *arch = (void *)(fathdr + 1);
-        uint32_t nfat_arch = swap32(fathdr->nfat_arch);
+        uint32_t nfat_arch = SWAP32(fathdr->nfat_arch);
         if(nfat_arch > 1000 || pr.size < sizeof(struct fat_header) + nfat_arch * sizeof(struct fat_arch)) {
             die("fat header is too small");
         }
         binary->mach_hdr = NULL;
         while(nfat_arch--) {
-            if((int) swap32(arch->cputype) == desired_cputype && (arch->cpusubtype == 0 || desired_cpusubtype == 0 || (int) swap32(arch->cpusubtype) == desired_cpusubtype)) {
-                uint32_t fat_offset = swap32(arch->offset);
+            if(SWAP32(arch->cputype) == desired_cputype && (arch->cpusubtype == 0 || desired_cpusubtype == 0 || SWAP32(arch->cpusubtype) == desired_cpusubtype)) {
+                uint32_t fat_offset = SWAP32(arch->offset);
                 if(fat_offset >= pr.size) {
                     die("fat_offset too big");
                 }
@@ -373,12 +373,12 @@ static addr_t b_sym_nlist(const struct binary *binary, const char *name, int opt
     const struct nlist *base = binary->ext_symtab;
     for(uint32_t n = binary->ext_nsyms; n > 0; n /= 2) {
         const struct nlist *pivot = base + n/2;
-        uint32_t strx = pivot->n_un.n_strx;
+        uint32_t strx = (uint32_t) pivot->n_un.n_strx;
         if(strx >= binary->strsize) {
             die("insane strx: %u", strx);
         }
         const char *pivot_str = binary->strtab + strx;
-        int cmp = strncmp(name, pivot_str, binary->strsize - strx);
+        int cmp = strncmp(name, pivot_str, (uint32_t) binary->strsize - strx);
         if(cmp == 0) {
             // we found it
             addr_t result = pivot->n_value;
@@ -452,9 +452,9 @@ static addr_t trie_recurse(const struct binary *binary, void *ptr, char *start, 
                 return b_sym(&binary->reexports[address], name0, options);
             }
             if(!(options & TO_EXECUTE)) {
-                address &= ~1;
+                address &= ~1u;
             }
-            return (addr_t) address + binary->export_baseaddr;
+            return ((addr_t) address) + binary->export_baseaddr;
         }
     }
 
@@ -508,7 +508,7 @@ addr_t b_private_sym(const struct binary *binary, const char *name, int options)
     const struct nlist *base = binary->symtab;
     for(uint32_t i = 0; i < binary->nsyms; i++) {
         const struct nlist *nl = base + i;
-        uint32_t strx = nl->n_un.n_strx;
+        uint32_t strx = (uint32_t) nl->n_un.n_strx;
         if(strx >= binary->strsize) {
             die("insane strx: %u", strx);
         }
@@ -565,7 +565,7 @@ uint32_t b_allocate_from_macho_fd(int fd) {
 
     munmap(hdr, 0x1000);
 
-    return (max + 0xfff) & ~0xfff;
+    return (max + 0xfff) & ~0xfffu;
 }
 
 
@@ -578,7 +578,7 @@ void b_inject_into_macho_fd(const struct binary *binary, int fd, addr_t (*find_h
     }
 
     struct segment_command *newseg = (void *) ((char *) (hdr + 1) + hdr->sizeofcmds);
-    off_t header_off = sizeof(struct mach_header) + hdr->sizeofcmds;
+    off_t header_off = (off_t) (sizeof(struct mach_header) + hdr->sizeofcmds);
 
     uint32_t init_ptrs[100];
     int num_init_ptrs = 0;
@@ -599,7 +599,7 @@ void b_inject_into_macho_fd(const struct binary *binary, int fd, addr_t (*find_h
             }
 
             hdr->ncmds++;
-            hdr->sizeofcmds += size;
+            hdr->sizeofcmds += (uint32_t) size;
 
             memcpy(newseg, seg, size);
 
@@ -670,7 +670,7 @@ void b_inject_into_macho_fd(const struct binary *binary, int fd, addr_t (*find_h
 
         // allocate a new segment for the stub
 
-        uint32_t stub_size = (sizeof(part1) + 4) * num_init_ptrs + sizeof(part2) + bytes_to_move + sizeof(part3) + 4;
+        uint32_t stub_size = (uint32_t) ((sizeof(part1) + 4) * num_init_ptrs + sizeof(part2) + bytes_to_move + sizeof(part3) + 4);
 
         if(!(hack_func & 1)) {
             die("hack func 0x%x is not thumb", hack_func);
@@ -685,7 +685,7 @@ void b_inject_into_macho_fd(const struct binary *binary, int fd, addr_t (*find_h
         seg_off = (seg_off + 0xfff) & ~0xfff;
 
         hdr->ncmds++;
-        hdr->sizeofcmds += sizeof(struct segment_command);
+        hdr->sizeofcmds += (uint32_t) sizeof(struct segment_command);
         
         newseg->cmd = LC_SEGMENT;
         newseg->cmdsize = sizeof(struct segment_command);

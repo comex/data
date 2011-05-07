@@ -7,19 +7,23 @@
 // http://www-igm.univ-mlv.fr/~lecroq/string/node19.html#SECTION00190 (was using this)
 
 static addr_t find_data_raw(range_t range, int16_t *buf, ssize_t pattern_size, size_t offset, int align, int options, const char *name) {
+    int8_t ps = (int8_t) pattern_size;
+    if(ps != pattern_size) {
+        die("pattern too long");
+    }
     // the problem with this is that it is faster to search for everything at once
     int8_t table[256];
     for(int c = 0; c < 256; c++) {
-        table[c] = pattern_size;
+        table[c] = ps;
     }
-    for(int pos = 0; pos < pattern_size; pos++) {
+    for(int8_t pos = 0; pos < ps; pos++) {
         if(buf[pos] == -1) {
             // Unfortunately, we can't put any character past being in this position...
             for(int i = 0; i < 256; i++) {
-                table[i] = pattern_size - pos - 1;
+                table[i] = ps - pos - 1;
             }
         } else {
-            table[buf[pos]] = pattern_size - pos - 1;
+            table[buf[pos]] = ps - pos - 1;
         }
     }
 

@@ -102,7 +102,7 @@ void b_relocate(struct binary *load, const struct binary *target, lookupsym_t lo
                 case S_NON_LAZY_SYMBOL_POINTERS:
                 case S_LAZY_SYMBOL_POINTERS: {
                     uint32_t indirect_table_offset = sect->reserved1;
-                    uint32_t *indirect = rangeconv_off((range_t) {load, load->dysymtab->indirectsymoff + indirect_table_offset*sizeof(uint32_t), (sect->size / 4) * sizeof(uint32_t)}).start;
+                    uint32_t *indirect = rangeconv_off((range_t) {load, (addr_t) (load->dysymtab->indirectsymoff + indirect_table_offset*sizeof(uint32_t)), (sect->size / 4) * sizeof(uint32_t)}).start;
                     uint32_t *things = rangeconv((range_t) {load, sect->addr, sect->size}).start;
                     for(uint32_t i = 0; i < sect->size / 4; i++) {
                         uint32_t sym = indirect[i];
