@@ -368,7 +368,7 @@ range_t b_macho_segrange(const struct binary *binary, const char *segname) {
     die("no such segment %s", segname);
 }
 
-static addr_t b_sym_nlist(const struct binary *binary, const char *name, bool to_execute) {
+static addr_t b_sym_nlist(const struct binary *binary, const char *name, int options) {
     // I stole dyld's codez
     const struct nlist *base = binary->ext_symtab;
     for(uint32_t n = binary->ext_nsyms; n > 0; n /= 2) {
@@ -382,7 +382,7 @@ static addr_t b_sym_nlist(const struct binary *binary, const char *name, bool to
         if(cmp == 0) {
             // we found it
             addr_t result = pivot->n_value;
-            if(to_execute && (pivot->n_desc & N_ARM_THUMB_DEF)) {
+            if((options & TO_EXECUTE) && (pivot->n_desc & N_ARM_THUMB_DEF)) {
                 result |= 1;
             }
             return result;
@@ -394,7 +394,7 @@ static addr_t b_sym_nlist(const struct binary *binary, const char *name, bool to
 
     for(unsigned int i = 0; i < binary->reexport_count; i++) {
         addr_t result;
-        if(result = b_sym(&binary->reexports[i], name, to_execute, false)) {
+        if(result = b_sym(&binary->reexports[i], name, options)) {
             return result;
         }
     }
@@ -429,7 +429,7 @@ static inline void *read_bytes(void **ptr, void *end, size_t size) {
 
 #define read_int(ptr, end, typ) *((typ *) read_bytes(ptr, end, sizeof(typ)))
 
-static addr_t trie_recurse(const struct binary *binary, void *ptr, char *start, char *end, const char *name0, const char *name, bool to_execute) {
+static addr_t trie_recurse(const struct binary *binary, void *ptr, char *start, char *end, const char *name0, const char *name, int options) {
     uint8_t terminal_size = read_int(&ptr, end, uint8_t);
     if(terminal_size) {
         uint32_t flags = read_uleb128(&ptr, end);
@@ -449,9 +449,9 @@ static addr_t trie_recurse(const struct binary *binary, void *ptr, char *start, 
                 if(address >= binary->reexport_count) {
                     die("invalid sub-library %d", address);
                 }
-                return b_sym(&binary->reexports[address], name0, to_execute, false);
+                return b_sym(&binary->reexports[address], name0, options);
             }
-            if(!to_execute) {
+            if(!(options & TO_EXECUTE)) {
                 address &= ~1;
             }
             return (addr_t) address + binary->export_baseaddr;
@@ -467,7 +467,7 @@ static addr_t trie_recurse(const struct binary *binary, void *ptr, char *start, 
             if(!c) {
                 uint64_t offset = read_uleb128(&ptr, end);
                 if(offset >= (size_t) (end - start)) die("invalid child offset");
-                return trie_recurse(binary, start + offset, start, end, name0, name2, to_execute);
+                return trie_recurse(binary, start + offset, start, end, name0, name2, options);
             }
             if(c != *name2++) {
                 break;
@@ -482,26 +482,26 @@ static addr_t trie_recurse(const struct binary *binary, void *ptr, char *start, 
     return 0;
 }
 
-static addr_t b_sym_trie(const struct binary *binary, const char *name, bool to_execute) {
+static addr_t b_sym_trie(const struct binary *binary, const char *name, int options) {
     return trie_recurse(binary,
                         binary->export_trie.start,
                         binary->export_trie.start,
                         (char *)binary->export_trie.start + binary->export_trie.size,
                         name,
                         name,
-                        to_execute);
+                        options);
 }
 
 // return value is |1 if to_execute is set and it is a thumb symbol
-addr_t b_sym(const struct binary *binary, const char *name, bool to_execute, bool must_find) {
-    addr_t result = (binary->export_trie.start ? b_sym_trie : b_sym_nlist)(binary, name, to_execute);
-    if(!result && must_find) {
+addr_t b_sym(const struct binary *binary, const char *name, int options) {
+    addr_t result = (binary->export_trie.start ? b_sym_trie : b_sym_nlist)(binary, name, options & ~MUST_FIND);
+    if(!result && (options & MUST_FIND)) {
         die("symbol %s not found", name);
     }
     return result;
 }
 
-addr_t b_private_sym(const struct binary *binary, const char *name, bool to_execute, bool must_find) {
+addr_t b_private_sym(const struct binary *binary, const char *name, int options) {
     if(!binary->symtab) {
         die("we wanted %s but there is no symbol table", name);
     }
@@ -514,13 +514,13 @@ addr_t b_private_sym(const struct binary *binary, const char *name, bool to_exec
         }
         if(!strncmp(name, binary->strtab + strx, binary->strsize - strx)) {
             addr_t result = nl->n_value;
-            if(to_execute && (nl->n_desc & N_ARM_THUMB_DEF)) {
+            if((options & TO_EXECUTE) && (nl->n_desc & N_ARM_THUMB_DEF)) {
                 result |= 1;
             }
             return result;
         }
     }
-    if(must_find) {
+    if(options & MUST_FIND) {
         die("symbol %s not found", name);
     }
     return 0;

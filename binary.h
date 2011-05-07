@@ -1,5 +1,8 @@
 #pragma once
 
+#define MUST_FIND 1
+#define TO_EXECUTE 2
+
 struct dyld_cache_header;
 struct shared_file_mapping_np;
 struct mach_header;
@@ -61,8 +64,9 @@ __attribute__((const)) range_t b_macho_segrange(const struct binary *binary, con
 void b_macho_store(struct binary *binary, const char *path);
 
 range_t b_nth_segment(const struct binary *binary, unsigned int n);
-addr_t b_sym(const struct binary *binary, const char *name, bool to_execute, bool must_find);
-addr_t b_private_sym(const struct binary *binary, const char *name, bool to_execute, bool must_find);
+
+addr_t b_sym(const struct binary *binary, const char *name, int options);
+addr_t b_private_sym(const struct binary *binary, const char *name, int options);
 
 uint32_t b_allocate_from_macho_fd(int fd);
 void b_inject_into_macho_fd(const struct binary *binary, int fd, addr_t (*find_hack_func)(const struct binary *binary));

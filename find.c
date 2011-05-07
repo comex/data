@@ -6,7 +6,7 @@
 // http://www-igm.univ-mlv.fr/~lecroq/string/tunedbm.html#SECTION00195
 // http://www-igm.univ-mlv.fr/~lecroq/string/node19.html#SECTION00190 (was using this)
 
-static addr_t find_data_raw(range_t range, int16_t *buf, ssize_t pattern_size, size_t offset, int align, bool must_find, const char *name) {
+static addr_t find_data_raw(range_t range, int16_t *buf, ssize_t pattern_size, size_t offset, int align, int options, const char *name) {
     // the problem with this is that it is faster to search for everything at once
     int8_t table[256];
     for(int c = 0; c < 256; c++) {
@@ -84,7 +84,7 @@ static addr_t find_data_raw(range_t range, int16_t *buf, ssize_t pattern_size, s
     done:
     if(foundit) {
         return foundit + offset;
-    } else if(must_find) {
+    } else if(options & MUST_FIND) {
         die("didn't find [%s] in range (%x, %zx)", name, range.start, range.size);
     } else {
         return 0;
@@ -121,33 +121,33 @@ static void parse_pattern(const char *to_find, int16_t buf[128], ssize_t *patter
     }
 }
 
-addr_t find_data(range_t range, const char *to_find, int align, bool must_find) {
+addr_t find_data(range_t range, const char *to_find, int align, int options) {
     int16_t buf[128];
     ssize_t pattern_size, offset;
     parse_pattern(to_find, buf, &pattern_size, &offset);
-    return find_data_raw(range, buf, pattern_size, offset, align, must_find, to_find);
+    return find_data_raw(range, buf, pattern_size, offset, align, options, to_find);
 }
 
-addr_t find_string(range_t range, const char *string, int align, bool must_find) {
+addr_t find_string(range_t range, const char *string, int align, int options) {
     size_t len = strlen(string);
     autofree int16_t *buf = malloc(sizeof(int16_t) * (len + 2));
     buf[0] = buf[len + 1] = 0;
     for(unsigned int i = 0; i < len; i++) {
         buf[i+1] = (uint8_t) string[i];
     }
-    addr_t result = find_data_raw(range, buf, len + 2, 1, align, must_find, string);
+    addr_t result = find_data_raw(range, buf, len + 2, 1, align, options, string);
     return result;
 }
 
-addr_t find_bytes(range_t range, const char *bytes, size_t len, int align, bool must_find) {
+addr_t find_bytes(range_t range, const char *bytes, size_t len, int align, int options) {
     autofree int16_t *buf = malloc(sizeof(int16_t) * (len + 2));
     for(unsigned int i = 0; i < len; i++) {
         buf[i] = (uint8_t) bytes[i];
     }
-    addr_t result = find_data_raw(range, buf, len, 0, align, must_find, "bytes");
+    addr_t result = find_data_raw(range, buf, len, 0, align, options, "bytes");
     return result;
 }
-addr_t find_int32(range_t range, uint32_t number, bool must_find) {
+addr_t find_int32(range_t range, uint32_t number, int options) {
     prange_t pr = rangeconv(range);
     char *start = pr.start;
     char *end = pr.start + pr.size;
@@ -156,45 +156,33 @@ addr_t find_int32(range_t range, uint32_t number, bool must_find) {
             return p - start + range.start;
         }
     }
-    if(must_find) {
+    if(options & MUST_FIND) {
         die("didn't find %08x in range", number);
     } else {
         return 0;
     }
 }
 
-addr_t find_bof(range_t range, addr_t eof, bool is_thumb) {
-    // push {..., lr}; add r7, sp, ...
-    addr_t addr = (eof - 1) & ~1;
-    check_range_has_addr(range, addr);
-    prange_t pr = rangeconv(range);
-    if(is_thumb) {
-        addr &= ~1;
-        uint8_t *p = pr.start + (addr - range.start);
-        // xx b5 xx af
-        while(!(p[1] == 0xb5 && \
-                p[3] == 0xaf)) {
-            p -= 2;
-            addr -= 2;
-            if((void *)p < (void *)pr.start) goto fail;
+// search for push {..., lr}; add r7, sp, ...
+// if is_thumb = 2, then search for both thumb and arm variants
+addr_t find_bof(const struct binary *binary, addr_t eof, int is_thumb) {
+    static size_t length = 0x400;
+    addr_t start = eof & ~1;
+    uint8_t *p = rangeconv((range_t) {binary, start - length, length}).start;
+    for(ssize_t i = length - 8; i >= 0; i -= 2) {
+        if(p[1] == 0xb5 && p[3] == 0xaf && is_thumb != 0) {
+            return start + i + 1;
+        } else if(p[2] == 0x2d && p[3] == 0xe9 &&
+                  p[6] == 0x8d && p[7] == 0xe2 &&
+                  is_thumb != 1 && !(i & 2)) {
+            return start + i;
         }
-    } else {
-        addr &= ~3;
-        uint16_t *p = pr.start + (addr - range.start);
-        // xx xx 2d e9 xx xx 8d e2
-        while(!(p[1] == 0xe92d && \
-                p[3] == 0xe28d)) {
-            p -= 2;
-            addr -= 4;
-            if((void *)p < (void *)pr.start) goto fail;
-        }
+
     }
-    return addr;
-    fail:
     die("couldn't find the beginning of %08x", eof);
 }
 
-uint32_t resolve_ldr(struct binary *binary, addr_t addr) {
+uint32_t resolve_ldr(const struct binary *binary, addr_t addr) {
     uint32_t val = b_read32(binary, addr & ~1); 
     addr_t target;
     if(addr & 1) {
@@ -273,13 +261,13 @@ addr_t find_bl(range_t *range) {
     return baseaddr + diff;
 }
 
-addr_t b_find_anywhere(struct binary *binary, const char *to_find, int align, bool must_find) {
+addr_t b_find_anywhere(const struct binary *binary, const char *to_find, int align, int options) {
     range_t range;
     for(int i = 0; (range = b_nth_segment(binary, i)).binary; i++) {
-        addr_t result = find_data(range, to_find, align, false);
+        addr_t result = find_data(range, to_find, align, 0);
         if(result) return result;
     }
-    if(must_find) {
+    if(options & MUST_FIND) {
         die("didn't find [%s] anywhere", to_find);
     } else {
         return 0;
