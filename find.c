@@ -42,24 +42,26 @@ static addr_t find_data_raw(range_t range, int16_t *buf, ssize_t pattern_size, s
     uint8_t *cursor = start;
 
 #define GUTS(keep_going) \
-        for(int i = 0; i >= (-pattern_size + 1); i--) { \
-            if(buf[i] != -1 && cursor[i] != buf[i]) { \
-                /* Not a match */ \
+        { \
+            for(int i = 0; i >= (-pattern_size + 1); i--) { \
+                if(buf[i] != -1 && cursor[i] != buf[i]) { \
+                    /* Not a match */ \
+                    goto keep_going; \
+                } \
+            } \
+            /* Whoa, we found it */ \
+            addr_t new_match = cursor - start + range.start; \
+            if(align && (new_match & (align - 1))) { \
+                /* Just kidding. */ \
                 goto keep_going; \
             } \
-        } \
-        /* Whoa, we found it */ \
-        addr_t new = cursor - start + range.start; \
-        if(align && (new & (align - 1))) { \
-            /* Just kidding. */ \
-            goto keep_going; \
-        } \
-        if(foundit) { \
-            die("found [%s] multiple times in range: first at %08x then at %08x", name, foundit, new); \
-        } \
-        foundit = new; \
-        if(align) { \
-            goto done; \
+            if(foundit) { \
+                die("found [%s] multiple times in range: first at %08x then at %08x", name, foundit, new_match); \
+            } \
+            foundit = new_match; \
+            if(align) { \
+                goto done; \
+            } \
         } \
         /* otherwise, keep searching to make sure we won't find it again */ \
         keep_going: \
@@ -278,15 +280,17 @@ addr_t b_find_anywhere(const struct binary *binary, const char *to_find, int ali
     }
 }
 
+struct pattern {
+    int16_t buf[128];
+    ssize_t pattern_size, offset;
+    const char *name;
+    addr_t *result;
+};
+
 struct findmany {
     range_t range;
     int num_patterns;
-    struct pattern {
-        int16_t buf[128];
-        ssize_t pattern_size, offset;
-        const char *name;
-        addr_t *result;
-    } *patterns;
+    struct pattern *patterns;
 };
 
 struct findmany *findmany_init(range_t range) {
@@ -311,16 +315,20 @@ void findmany_add(addr_t *result, struct findmany *fm, const char *to_find) {
     *result = 0;
 }
 
+struct node {
+    uint16_t next[16];
+    uint32_t terminates;
+};
+
+struct node2 {
+    uint16_t next[16];
+};
+
 struct findmany2 {
-    struct node {
-        uint16_t next[16];
-        uint32_t terminates;
-    } *nodes;
+    struct node *nodes;
     uint8_t *index_paths;
     uint16_t node_count;
-    struct node2 {
-        uint16_t next[16];
-    } *nodes2;
+    struct node2 *nodes2;
     uint16_t node2_count;
 };
 
