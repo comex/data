@@ -17,6 +17,7 @@
 #include <errno.h>
 #include <sys/mman.h>
 #include <unistd.h>
+#include <sys/cdefs.h>
 #ifdef PROFILING
 #include <time.h>
 #endif
@@ -27,7 +28,7 @@ static inline void _free_cleanup(void *pp) {
 }
 #define autofree __attribute__((cleanup(_free_cleanup)))
 
-__attribute__((unused)) static const char *const _arg = MAP_FAILED;
+__attribute__((unused)) static const char *const _arg = (char *) MAP_FAILED;
 
 #define die(fmt, args...) ((_arg == MAP_FAILED) ? \
     _die("%s: " fmt "\n", __func__, ##args) : \
@@ -39,6 +40,8 @@ struct binary;
 typedef uint32_t addr_t;
 typedef struct { const struct binary *binary; addr_t start; size_t size; } range_t;
 typedef struct { void *start; size_t size; } prange_t;
+
+__BEGIN_DECLS
 
 void check_range_has_addr(range_t range, addr_t addr);
 
@@ -58,3 +61,5 @@ void store_file(prange_t range, const char *filename, mode_t mode);
 uint32_t parse_hex_uint32(const char *string);
 
 __attribute__((noreturn)) void _die(const char *fmt, ...);
+
+__END_DECLS

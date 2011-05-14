@@ -1,4 +1,5 @@
 #pragma once
+#include "common.h"
 
 #define MUST_FIND 1
 #define TO_EXECUTE 2
@@ -43,6 +44,7 @@ struct binary {
     uint32_t reserved[4];
 };
 
+__BEGIN_DECLS
 
 __attribute__((const)) prange_t rangeconv(range_t range);
 __attribute__((const)) prange_t rangeconv_off(range_t range);
@@ -70,6 +72,8 @@ addr_t b_private_sym(const struct binary *binary, const char *name, int options)
 
 uint32_t b_allocate_from_macho_fd(int fd);
 void b_inject_into_macho_fd(const struct binary *binary, int fd, addr_t (*find_hack_func)(const struct binary *binary));
+
+__END_DECLS
 
 #define CMD_ITERATE(hdr, cmd) for(struct load_command *cmd = (void *)((hdr) + 1), *end = (void *)((char *)(hdr + 1) + (hdr)->sizeofcmds); cmd < end; cmd = (void *)((char *)cmd + cmd->cmdsize))
 

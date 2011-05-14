@@ -3,6 +3,9 @@
 struct binary;
 #define max(a, b) ((a) > (b) ? (a) : (b))
 #define min(a, b) ((a) < (b) ? (a) : (b))
+
+__BEGIN_DECLS
+
 // Specify align as 0 if you only expect to find it at one place.
 addr_t find_data(range_t range, const char *to_find, int align, int options);
 addr_t find_string(range_t range, const char *string, int align, int options);
@@ -20,3 +23,5 @@ addr_t b_find_anywhere(const struct binary *binary, const char *to_find, int ali
 struct findmany *findmany_init(range_t range);
 void findmany_add(addr_t *result, struct findmany *fm, const char *to_find);
 void findmany_go(struct findmany *fm);
+
+__END_DECLS

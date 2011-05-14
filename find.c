@@ -12,11 +12,20 @@ static addr_t find_data_raw(range_t range, int16_t *buf, ssize_t pattern_size, s
         die("pattern too long");
     }
     // the problem with this is that it is faster to search for everything at once
+
+    // reduce inefficiency
+    for(int pos = pattern_size - 1; pos >= 0; pos--) {
+        if(buf[pos] == -1) {
+            pattern_size--;
+        } else {
+            break;
+        }
+    }
     int8_t table[256];
     for(int c = 0; c < 256; c++) {
         table[c] = ps;
     }
-    for(int8_t pos = 0; pos < ps; pos++) {
+    for(int8_t pos = 0; pos < ps - 1; pos++) {
         if(buf[pos] == -1) {
             // Unfortunately, we can't put any character past being in this position...
             for(int i = 0; i < 256; i++) {
@@ -27,8 +36,9 @@ static addr_t find_data_raw(range_t range, int16_t *buf, ssize_t pattern_size, s
         }
     }
 
-    int8_t shift = table[pattern_size - 1];
-    table[pattern_size - 1] = 0;
+    // this can't be -1 due to above
+    int8_t shift = table[buf[pattern_size - 1]];
+    table[buf[pattern_size - 1]] = 0;
 
     // now, for each c, let x be the last position in the string, other than the final position, where c might appear, or -1 if it doesn't appear anywhere; table[i] is size - x - 1.
     // so if we got c but no match, we can skip ahead by table[i]
@@ -38,7 +48,7 @@ static addr_t find_data_raw(range_t range, int16_t *buf, ssize_t pattern_size, s
     prange_t pr = rangeconv(range);
     uint8_t *start = pr.start + pattern_size - 1;
     uint8_t *end = pr.start + pr.size;
-    uint8_t *cutoff = end - 400;
+    uint8_t *cutoff = end - 400; // arbitrary
     uint8_t *cursor = start;
 
 #define GUTS(keep_going) \
@@ -66,10 +76,11 @@ static addr_t find_data_raw(range_t range, int16_t *buf, ssize_t pattern_size, s
         /* otherwise, keep searching to make sure we won't find it again */ \
         keep_going: \
         cursor += shift;
+    
+    uint8_t jump;
 
     while(1) {
         if(cursor >= cutoff) break;
-        uint8_t jump;
         do {
             jump = table[*cursor];
             cursor += jump;
@@ -83,8 +94,11 @@ static addr_t find_data_raw(range_t range, int16_t *buf, ssize_t pattern_size, s
     }
     if(cursor >= end) goto done;
     while(1) {
-        cursor += table[*cursor];
-        if(cursor >= end) goto done;
+        do {
+            jump = table[*cursor];
+            cursor += jump;
+            if(cursor >= end) goto done;
+        } while(jump);
         GUTS(lbl2)
     }
     done:

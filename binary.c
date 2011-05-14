@@ -147,6 +147,20 @@ void b_prange_load_dyldcache(struct binary *binary, prange_t pr, const char *nam
 #undef _arg
 }
 
+static const char *convert_lc_str(const struct load_command *cmd, union lc_str lcs) {
+    if(lcs.offset >= cmd->cmdsize) {
+        die("bad lc_str");
+    }
+    char *ret = ((char *) cmd) + lcs.offset, *end = ((char *) cmd) + cmd->cmdsize;
+    for(char *p = ret; p < end; p++) {
+        if(*p == '\0') {
+            // ok, it's terminated
+            return ret;
+        }
+    }
+    die("bad lc_str");
+}
+
 void b_dyldcache_load_macho(const struct binary *binary, const char *filename, struct binary *out) {
     if(!binary->dyld_hdr) {
         die("not a dyld cache");
@@ -184,7 +198,7 @@ void b_dyldcache_load_macho(const struct binary *binary, const char *filename, s
             CMD_ITERATE(out->mach_hdr, cmd) {
                 if(cmd->cmd == LC_REEXPORT_DYLIB) {
                     struct dylib *dylib = &((struct dylib_command *) cmd)->dylib;
-                    char *name = ((char *) cmd) + dylib->name.offset;
+                    const char *name = convert_lc_str(cmd, dylib->name);
                     b_dyldcache_load_macho(out, name, p);
                     p++;
                 }
@@ -375,7 +389,8 @@ static addr_t b_sym_nlist(const struct binary *binary, const char *name, int opt
         const struct nlist *pivot = base + n/2;
         uint32_t strx = (uint32_t) pivot->n_un.n_strx;
         if(strx >= binary->strsize) {
-            die("insane strx: %u", strx);
+            fprintf(stderr, "insane strx: %u\n", strx);
+            return 0;
         }
         const char *pivot_str = binary->strtab + strx;
         int cmp = strncmp(name, pivot_str, (uint32_t) binary->strsize - strx);

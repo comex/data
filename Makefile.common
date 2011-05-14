@@ -9,7 +9,10 @@ DYNAMICLIB  = -dynamiclib
 DYLIB = dylib
 override CFLAGS += -DIMG3_SUPPORT -dead_strip
 endif
-override CFLAGS += -gstabs -Os -Wall -Wextra -Wno-parentheses -Wreturn-type
+override CFLAGS += -Os -Wall -Wextra -Wno-parentheses -Wreturn-type
+ifneq "$(NDEBUG)" "1"
+override CFLAGS += -gstabs
+endif
 
 SDK_GCC = /Developer/Platforms/iPhoneOS.platform/Developer/usr/bin/gcc-4.2 -isysroot /Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS4.3.sdk/ -mapcs-frame -fomit-frame-pointer -mthumb
 
