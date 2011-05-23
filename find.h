@@ -13,7 +13,7 @@ addr_t find_bytes(range_t range, const char *bytes, size_t len, int align, int o
 addr_t find_int32(range_t range, uint32_t number, int options);
 
 // helper functions
-addr_t find_bof(const struct binary *binary, addr_t eof, int is_thumb);
+addr_t find_bof(range_t range, addr_t eof, int is_thumb);
 uint32_t resolve_ldr(const struct binary *binary, addr_t addr);
 
 addr_t find_bl(range_t *range);

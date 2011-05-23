@@ -185,17 +185,21 @@ addr_t find_int32(range_t range, uint32_t number, int options) {
 
 // search for push {..., lr}; add r7, sp, ...
 // if is_thumb = 2, then search for both thumb and arm variants
-addr_t find_bof(const struct binary *binary, addr_t eof, int is_thumb) {
-    static size_t length = 0x400;
+addr_t find_bof(range_t range, addr_t eof, int is_thumb) {
     addr_t start = eof & ~1;
-    uint8_t *p = rangeconv((range_t) {binary, start - length, length}).start;
-    for(ssize_t i = length - 8; i >= 0; i -= 2) {
+    if(start - range.start >= range.size) {
+        die("out of range: %x", eof);
+    }
+
+    uint8_t *p = rangeconv(range).start + (start - range.start);
+    addr_t addr = start;
+    for(p -= 4, addr -= 4; addr >= start - 0x1000 && addr >= range.start; p -= 2, addr -= 2) {
         if(p[1] == 0xb5 && p[3] == 0xaf && is_thumb != 0) {
-            return start + i + 1;
+            return addr | 1;
         } else if(p[2] == 0x2d && p[3] == 0xe9 &&
                   p[6] == 0x8d && p[7] == 0xe2 &&
-                  is_thumb != 1 && !(i & 2)) {
-            return start + i;
+                  is_thumb != 1 && !(addr & 2)) {
+            return addr;
         }
 
     }
