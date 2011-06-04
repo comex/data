@@ -1,5 +1,4 @@
 #pragma once
-#include "common.h"
 #include "binary.h"
 
 typedef uint32_t (*lookupsym_t)(const struct binary *binary, const char *sym);

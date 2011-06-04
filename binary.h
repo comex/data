@@ -1,13 +1,31 @@
 #pragma once
 #include "common.h"
 
+// options
 #define MUST_FIND 1
+// for sym
 #define TO_EXECUTE 2
+#define PRIVATE_SYM 4
+#define IMPORTED_SYM 8
+// for rangeconv
+#define EXTEND_RANGE 16
 
 struct dyld_cache_header;
 struct shared_file_mapping_np;
 struct mach_header;
 struct dysymtab_command;
+
+struct data_segment {
+    range_t file_range;
+    range_t vm_range;
+    void *native_segment;
+};
+
+struct data_sym {
+    const char *name;
+    addr_t address;
+};
+
 struct binary {
     bool valid;
 
@@ -15,71 +33,45 @@ struct binary {
     void *load_add;
     prange_t valid_range;
 
-    struct dyld_cache_header *dyld_hdr;
-    uint32_t dyld_mapping_count;
-    struct shared_file_mapping_np *dyld_mappings;
-    struct shared_file_mapping_np *last_sfm;
+    size_t header_offset;
 
-    struct mach_header *mach_hdr;
-    struct segment_command *last_seg;
-
-    struct nlist *symtab;
-    uint32_t nsyms;
+    struct data_segment *segments;
+    uint32_t nsegments; 
+    uint32_t last_seg;
     
-    // for b_sym (external stuff)
-    struct nlist *ext_symtab;
-    uint32_t ext_nsyms;
-
-    // alternatively
-    prange_t export_trie;
-    addr_t export_baseaddr;
-
-    char *strtab;
-    uint32_t strsize;
-    struct dysymtab_command *dysymtab;
-
     struct binary *reexports;
-    unsigned int reexport_count;
+    unsigned int nreexports;
 
-    uint32_t reserved[4];
+    struct mach_binary *mach;
+    struct dyldcache_binary *dyld;
+
+    addr_t (*_sym)(const struct binary *binary, const char *name, int options);
+    void (*_copy_syms)(const struct binary *binary, struct data_sym **syms, uint32_t *nsyms, int options);
 };
 
 __BEGIN_DECLS
 
-__attribute__((const)) prange_t rangeconv(range_t range);
-__attribute__((const)) prange_t rangeconv_off(range_t range);
-__attribute__((const)) range_t range_to_off_range(range_t range);
-__attribute__((const)) range_t off_range_to_range(range_t range);
+static inline bool prange_check(const struct binary *binary, prange_t range) {
+    return binary->valid_range.start <= range.start && range.size <= (size_t) ((char *) binary->valid_range.start + binary->valid_range.size - (char *) range.start);
+}
+
+__attribute__((const)) prange_t rangeconv(range_t range, int flags);
+__attribute__((const)) prange_t rangeconv_off(range_t range, int flags);
+__attribute__((const)) range_t range_to_off_range(range_t range, int flags);
+__attribute__((const)) range_t off_range_to_range(range_t range, int flags);
 
 void b_init(struct binary *binary);
 
-void b_load_dyldcache(struct binary *binary, const char *path, bool rw);
-void b_prange_load_dyldcache(struct binary *binary, prange_t range, const char *name);
-void b_dyldcache_load_macho(const struct binary *binary, const char *filename, struct binary *out);
-
-void b_macho_load_symbols(struct binary *binary);
-void b_load_macho(struct binary *binary, const char *path, bool rw);
-void b_fd_load_macho(struct binary *binary, int fd, bool rw);
-void b_prange_load_macho(struct binary *binary, prange_t range, const char *name);
-
-__attribute__((const)) range_t b_macho_segrange(const struct binary *binary, const char *segname);
-void b_macho_store(struct binary *binary, const char *path);
-
-range_t b_nth_segment(const struct binary *binary, unsigned int n);
-
+// return value is |1 if to_execute is set and it is a thumb symbol
 addr_t b_sym(const struct binary *binary, const char *name, int options);
-addr_t b_private_sym(const struct binary *binary, const char *name, int options);
-
-uint32_t b_allocate_from_macho_fd(int fd);
-void b_inject_into_macho_fd(const struct binary *binary, int fd, addr_t (*find_hack_func)(const struct binary *binary));
+void b_copy_syms(const struct binary *binary, struct data_sym **syms, uint32_t *nsyms, int options);
 
 __END_DECLS
 
-#define CMD_ITERATE(hdr, cmd) for(struct load_command *cmd = (struct load_command *)((hdr) + 1), *end = (struct load_command *)((char *)(hdr + 1) + (hdr)->sizeofcmds); cmd < end; cmd = (struct load_command *)((char *)cmd + cmd->cmdsize))
 
 #define r(sz) \
 static inline uint##sz##_t b_read##sz(const struct binary *binary, addr_t addr) { \
-    return *(uint##sz##_t *)(rangeconv((range_t) {binary, addr, sz/8}).start); \
+    return *(uint##sz##_t *)(rangeconv((range_t) {binary, addr, sz/8}, MUST_FIND).start); \
 }
 
 r(8)

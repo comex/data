@@ -45,7 +45,7 @@ static addr_t find_data_raw(range_t range, int16_t *buf, ssize_t pattern_size, s
     // updated
     buf += pattern_size - 1;
     addr_t foundit = 0;
-    prange_t pr = rangeconv(range);
+    prange_t pr = rangeconv(range, MUST_FIND);
     uint8_t *start = pr.start + pattern_size - 1;
     uint8_t *end = pr.start + pr.size;
     uint8_t *cutoff = end - 400; // arbitrary
@@ -168,7 +168,7 @@ addr_t find_bytes(range_t range, const char *bytes, size_t len, int align, int o
     return result;
 }
 addr_t find_int32(range_t range, uint32_t number, int options) {
-    prange_t pr = rangeconv(range);
+    prange_t pr = rangeconv(range, MUST_FIND);
     char *start = pr.start;
     char *end = pr.start + pr.size;
     for(char *p = start; p + 4 <= end; p++) {
@@ -191,7 +191,7 @@ addr_t find_bof(range_t range, addr_t eof, int is_thumb) {
         die("out of range: %x", eof);
     }
 
-    uint8_t *p = rangeconv(range).start + (start - range.start);
+    uint8_t *p = rangeconv(range, MUST_FIND).start + (start - range.start);
     addr_t addr = start;
     for(p -= 4, addr -= 4; addr >= start - 0x1000 && addr >= range.start; p -= 2, addr -= 2) {
         if(p[1] == 0xb5 && p[3] == 0xaf && is_thumb != 0) {
@@ -232,7 +232,7 @@ uint32_t resolve_ldr(const struct binary *binary, addr_t addr) {
 addr_t find_bl(range_t *range) {
     bool thumb = range->start & 1;
     range->start &= ~1;
-    prange_t pr = rangeconv(*range);    
+    prange_t pr = rangeconv(*range, MUST_FIND);
     uint32_t diff;
     void *base;
     if(thumb) {
@@ -286,9 +286,9 @@ addr_t find_bl(range_t *range) {
 }
 
 addr_t b_find_anywhere(const struct binary *binary, const char *to_find, int align, int options) {
-    range_t range;
-    for(int i = 0; (range = b_nth_segment(binary, i)).binary; i++) {
-        addr_t result = find_data(range, to_find, align, 0);
+    for(uint32_t i = 0; i < binary->nsegments; i++) {
+        range_t range = binary->segments[i].vm_range;
+        addr_t result = find_data(range, to_find, align, options & ~MUST_FIND);
         if(result) return result;
     }
     if(options & MUST_FIND) {
@@ -438,21 +438,11 @@ void findmany_go(struct findmany *fm) {
     printf("it took %d clocks to prepare the DFA\n", (int) (b - a));
 #endif
 
-    prange_t pr = rangeconv(fm->range);
+    prange_t pr = rangeconv(fm->range, MUST_FIND);
     uint8_t *start = pr.start;
     struct node *cur = &fm2.nodes[0];
     for(uint8_t *ptr = start; ptr < start + pr.size; ptr++) {
         uint8_t chr = *ptr;
-
-        /*
-        printf("cur = %.3d", (int) (cur - fm2.nodes));
-        for(int p = 0; p < fm->num_patterns; p++) {
-            uint8_t idx = fm2.index_paths[(cur - fm2.nodes) * fm->num_patterns + p];
-            printf(" %d:%.2hhu(%04hx)", p, idx, fm->patterns[p].buf[idx]);
-        }
-        printf(" this char:%02hhx\n", chr);
-        */
-        
 
         cur = &fm2.nodes[fm2.nodes2[cur->next[chr / 16]].next[chr % 16]];
         if(cur->terminates) {

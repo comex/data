@@ -2,10 +2,10 @@ include Makefile.common
 all: $(OUTDIR) $(OUTDIR)/libdata.a $(OUTDIR)/libdata.$(DYLIB)
 
 $(OUTDIR):
-	mkdir $(OUTDIR)
+	mkdir -p $(OUTDIR) $(OUTDIR)/mach-o $(OUTDIR)/dyldcache
 clean: .clean
 
-OBJS := common.o binary.o running_kernel.o link.o find.o cc.o lzss.o 
+OBJS := common.o binary.o running_kernel.o find.o cc.o lzss.o mach-o/binary.o mach-o/link.o dyldcache/binary.o
 OBJS := $(patsubst %,$(OUTDIR)/%,$(OBJS))
 
 $(OUTDIR)/libdata.a: $(OBJS)

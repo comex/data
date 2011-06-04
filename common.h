@@ -28,7 +28,7 @@ static inline void _free_cleanup(void *pp) {
 }
 #define autofree __attribute__((cleanup(_free_cleanup)))
 
-__attribute__((unused)) static const char *const _arg = (char *) MAP_FAILED;
+__unused static const char *const _arg = (char *) MAP_FAILED;
 
 #define die(fmt, args...) ((_arg == MAP_FAILED) ? \
     _die("%s: " fmt "\n", __func__, ##args) : \
@@ -61,5 +61,12 @@ void store_file(prange_t range, const char *filename, mode_t mode);
 uint32_t parse_hex_uint32(const char *string);
 
 __attribute__((noreturn)) void _die(const char *fmt, ...);
+
+#if !defined(__APPLE__) || __DARWIN_C_LEVEL < 200809L
+static inline size_t strnlen(const char *s, size_t n) {
+  const char *p = (const char *) memchr(s, 0, n);
+  return p ? (size_t) (p-s) : n;
+}
+#endif
 
 __END_DECLS

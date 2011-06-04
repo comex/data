@@ -1,11 +1,11 @@
-#include "running_kernel.h"
 #ifdef __APPLE__
-#include <mach/mach.h>
-#include "loader.h"
-#include "nlist.h"
-#include "fat.h"
-#include "link.h"
+#include "running_kernel.h"
 #include "find.h"
+#include "mach-o/link.h"
+#include "mach-o/binary.h"
+#include "mach-o/headers/loader.h"
+#include "mach-o/headers/nlist.h"
+#include <mach/mach.h>
 #include <assert.h>
 extern host_priv_t host_priv_self();
 // copied from xnu
@@ -48,8 +48,8 @@ mach_port_t get_kernel_task() {
 
 uint32_t b_allocate_from_running_kernel(const struct binary *binary) {
     mach_port_t kernel_task = get_kernel_task();
-    if(binary->mach_hdr->flags & MH_PREBOUND) {
-        CMD_ITERATE(binary->mach_hdr, cmd) {
+    if(binary->mach->hdr->flags & MH_PREBOUND) {
+        CMD_ITERATE(binary->mach->hdr, cmd) {
             if(cmd->cmd == LC_SEGMENT) {
                 struct segment_command *seg = (void *) cmd;
                 if(seg->vmsize == 0) continue;
@@ -73,7 +73,7 @@ uint32_t b_allocate_from_running_kernel(const struct binary *binary) {
         // try to reserve some space
         uint32_t slide;
         for(slide = 0xf0000000; slide < 0xf0000000 + 0x01000000; slide += 0x10000) {
-            CMD_ITERATE(binary->mach_hdr, cmd) {
+            CMD_ITERATE(binary->mach->hdr, cmd) {
                 if(cmd->cmd == LC_SEGMENT) {
                     struct segment_command *seg = (void *) cmd;
                     if(seg->vmsize == 0) continue;
@@ -94,7 +94,7 @@ uint32_t b_allocate_from_running_kernel(const struct binary *binary) {
                     }
                     // Bother, it didn't work.  So we need to increase the slide...
                     // But first we need to get rid of the gunk we did manage to allocate.
-                    CMD_ITERATE(binary->mach_hdr, cmd2) {
+                    CMD_ITERATE(binary->mach->hdr, cmd2) {
                         if(cmd2 == cmd) break;
                         if(cmd2->cmd == LC_SEGMENT) {
                             struct segment_command *seg2 = (void *) cmd2;
@@ -121,18 +121,17 @@ uint32_t b_allocate_from_running_kernel(const struct binary *binary) {
 
 void b_inject_into_running_kernel(struct binary *to_load, uint32_t sysent) {
     // save sysent so unload can have it
-    to_load->mach_hdr->filetype = sysent;
+    to_load->mach->hdr->filetype = sysent;
 
     mach_port_t kernel_task = get_kernel_task();
 
-    CMD_ITERATE(to_load->mach_hdr, cmd) {
+    CMD_ITERATE(to_load->mach->hdr, cmd) {
         if(cmd->cmd == LC_SEGMENT) {
             struct segment_command *seg = (void *) cmd;
-            ((struct binary *) to_load)->last_seg = seg;
             uint32_t fs = seg->filesize;
             if(seg->vmsize < fs) fs = seg->vmsize;
             // if prebound, slide = 0
-            vm_offset_t of = (vm_offset_t) rangeconv((range_t) {to_load, seg->vmaddr, seg->filesize}).start;
+            vm_offset_t of = (vm_offset_t) rangeconv((range_t) {to_load, seg->vmaddr, seg->filesize}, MUST_FIND).start;
             vm_address_t ad = seg->vmaddr;
             while(fs > 0) {
                 // complete headbang.
@@ -184,16 +183,15 @@ void b_inject_into_running_kernel(struct binary *to_load, uint32_t sysent) {
                                 (vm_offset_t) &orig_sysent,
                                 &whatever));
 
-    CMD_ITERATE(to_load->mach_hdr, cmd) {
+    CMD_ITERATE(to_load->mach->hdr, cmd) {
         if(cmd->cmd == LC_SEGMENT) {
             struct segment_command *seg = (void *) cmd;
-            ((struct binary *) to_load)->last_seg = seg;
             struct section *sections = (void *) (seg + 1);
             for(uint32_t i = 0; i < seg->nsects; i++) {
                 struct section *sect = &sections[i];
 
                 if((sect->flags & SECTION_TYPE) == S_MOD_INIT_FUNC_POINTERS) {
-                    void **things = rangeconv((range_t) {to_load, sect->addr, sect->size}).start;
+                    void **things = rangeconv((range_t) {to_load, sect->addr, sect->size}, MUST_FIND).start;
                     for(uint32_t i = 0; i < sect->size / 4; i++) {
                         struct sysent my_sysent = { 1, 0, 0, things[i], NULL, NULL, _SYSCALL_RET_INT_T, 0 };
                         printf("--> %p\n", things[i]);
@@ -315,13 +313,13 @@ void b_running_kernel_load_macho(struct binary *binary) {
 
     ok:;
 
-    binary->actual_cpusubtype = binary->mach_hdr->cpusubtype;
+    binary->actual_cpusubtype = binary->mach->hdr->cpusubtype;
 
-    if(binary->mach_hdr->sizeofcmds > size - sizeof(*binary->mach_hdr)) {
+    if(binary->mach->hdr->sizeofcmds > size - sizeof(*binary->mach->hdr)) {
         die("sizeofcmds is too big");
     }
     addr_t maxoff = 0;
-    CMD_ITERATE(binary->mach_hdr, cmd) {
+    CMD_ITERATE(binary->mach->hdr, cmd) {
         if(cmd->cmd == LC_SEGMENT) {
             struct segment_command *scmd = (void *) cmd;
             addr_t newmax = scmd->fileoff + scmd->filesize;
@@ -331,7 +329,7 @@ void b_running_kernel_load_macho(struct binary *binary) {
 
     char *buf = malloc(maxoff);
 
-    CMD_ITERATE(binary->mach_hdr, cmd) {
+    CMD_ITERATE(binary->mach->hdr, cmd) {
         if(cmd->cmd == LC_SEGMENT) {
             struct segment_command *scmd = (void *) cmd;
             addr_t off = scmd->fileoff;
@@ -350,7 +348,7 @@ void b_running_kernel_load_macho(struct binary *binary) {
         }
     }
 
-    b_prange_load_macho(binary, (prange_t) {buf, maxoff}, "<running kernel>");    
+    b_prange_load_macho(binary, (prange_t) {buf, maxoff}, 0, "<running kernel>");    
 }
 
 #endif
