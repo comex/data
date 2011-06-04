@@ -22,6 +22,17 @@ GCC_armv6 = $(SDK_GCC) -arch armv6
 GCC_armv7 = $(SDK_GCC) -arch armv7
 GCC_arm_universal = $(SDK_GCC) -arch armv6 -arch armv7
 
+GXX_native = g++-mp-4.6
+
+# C++
+
+GXX ?= $(GXX_$(BUILD))
+
+override CXXFLAGS += $(CFLAGS) -std=gnu++0x -Werror -Wno-pointer-arith
+override GXX := $(GXX) $(CXXFLAGS)
+
+# C
+
 GCC ?= $(GCC_$(BUILD))
 
 ifneq "$(findstring g++,$(GCC))" ""
@@ -30,7 +41,8 @@ else
 override CFLAGS += -std=gnu99 -Werror -Wimplicit
 endif
 
-override GCC += $(CFLAGS)
+override GCC := $(GCC) $(CFLAGS)
+
 AR ?= ar
 ifneq "$(filter $(BUILD),armv6 armv7 arm_universal)" ""
 DATADIR = $(dir $(lastword $(MAKEFILE_LIST)))
@@ -41,6 +53,9 @@ endif
 
 $(OUTDIR)/%.o: %.c *.h
 	$(GCC) -c -o $@ $<
+
+$(OUTDIR)/%.o: %.cpp *.h
+	$(GXX) -c -o $@ $<
 
 .clean:
 	rm -rf native universal armv6 armv7 arm_universal
