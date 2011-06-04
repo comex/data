@@ -14,9 +14,7 @@ __BEGIN_DECLS
 void b_prange_load_dyldcache(struct binary *binary, prange_t range, const char *name);
 void b_dyldcache_load_macho(const struct binary *binary, const char *filename, struct binary *out);
 
-static inline void b_load_dyldcache(struct binary *binary, const char *filename) {
-    return b_prange_load_dyldcache(binary, load_file(filename, true, NULL), filename);
-}
+void b_load_dyldcache(struct binary *binary, const char *filename);
 
 
 __END_DECLS

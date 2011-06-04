@@ -604,3 +604,6 @@ range_t b_macho_segrange(const struct binary *binary, const char *segname) {
     die("no such segment %s", segname);
 }
 
+void b_load_macho(struct binary *binary, const char *filename) {
+    return b_prange_load_macho(binary, load_file(filename, true, NULL), 0, filename);
+}

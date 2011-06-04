@@ -103,3 +103,7 @@ void b_dyldcache_load_macho(const struct binary *binary, const char *filename, s
     }
     die("couldn't find %s in dyld cache", filename);
 }
+
+void b_load_dyldcache(struct binary *binary, const char *filename) {
+    return b_prange_load_dyldcache(binary, load_file(filename, true, NULL), filename);
+}
