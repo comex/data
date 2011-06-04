@@ -5,6 +5,7 @@ for last; do
     ldid="$ldid $old"
     old="$last"
 done
+archs="$(lipo -info "$last")"
 if [ -z "$(echo $archs | grep are:)" ]; then
     $ldid "$last"
 else
