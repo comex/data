@@ -48,7 +48,7 @@ inline prange_t rangeconv_off(range_t range, int flags) {
         // dyld caches are weird.
         range.start = range.binary->header_offset;
     }
-    pr.start = (char *) range.binary->load_add + range.start;
+    pr.start = (char *) range.binary->valid_range.start + range.start;
     pr.size = range.size;
     if(!prange_check(range.binary, pr)) {
         if(flags & MUST_FIND) {

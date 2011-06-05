@@ -29,7 +29,9 @@ GXX_native = g++-mp-4.6
 GXX ?= $(GXX_$(BUILD))
 
 override CXXFLAGS += $(CFLAGS) -std=gnu++0x -Werror -Wno-pointer-arith
+ifneq "$(GXX)" ""
 override GXX := $(GXX) $(CXXFLAGS)
+endif
 
 # C
 

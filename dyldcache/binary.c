@@ -19,7 +19,6 @@ void b_prange_load_dyldcache(struct binary *binary, prange_t pr, const char *nam
     binary->valid = true;
     binary->dyld = calloc(1, sizeof(*binary->dyld));
     binary->valid_range = pr;
-    binary->load_add = pr.start;
 
     if(pr.size < sizeof(*binary->dyld->hdr)) {
         die("truncated (no room for dyld cache header)");
@@ -72,15 +71,15 @@ void b_dyldcache_load_macho(const struct binary *binary, const char *filename, s
         die("insane images count");
     }
 
+    struct dyld_cache_image_info *info = rangeconv_off((range_t) {binary, binary->dyld->hdr->imagesOffset, binary->dyld->hdr->imagesCount * sizeof(*info)}, MUST_FIND).start;
     for(unsigned int i = 0; i < binary->dyld->hdr->imagesCount; i++) {
-        struct dyld_cache_image_info *info = rangeconv_off((range_t) {binary, binary->dyld->hdr->imagesOffset + (addr_t) (i * sizeof(*info)), sizeof(*info)}, MUST_FIND).start;
-        char *name = rangeconv_off((range_t) {binary, info->pathFileOffset, 128}, MUST_FIND).start;
+        char *name = rangeconv_off((range_t) {binary, info[i].pathFileOffset, 128}, MUST_FIND).start;
 
         if(strncmp(name, filename, 128)) {
             continue;
         }
         // we found it
-        b_prange_load_macho(out, rangeconv((range_t) {binary, (uint32_t) info->address, 0}, MUST_FIND | EXTEND_RANGE), (uint32_t) info->address, filename);
+        b_prange_load_macho(out, binary->valid_range,range_to_off_range((range_t) {binary, (uint32_t) info[i].address, 0}, MUST_FIND).start, filename);
         
         // look for reexports (maybe blowing the stack)
         int count = 0;
@@ -93,7 +92,7 @@ void b_dyldcache_load_macho(const struct binary *binary, const char *filename, s
             CMD_ITERATE(out->mach->hdr, cmd) {
                 if(cmd->cmd == LC_REEXPORT_DYLIB) {
                     const char *name = convert_lc_str(cmd, ((struct dylib_command *) cmd)->dylib.name);
-                    b_dyldcache_load_macho(out, name, p);
+                    b_dyldcache_load_macho(binary, name, p);
                     p++;
                 }
             }

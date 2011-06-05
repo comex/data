@@ -28,15 +28,15 @@ struct data_sym {
 
 struct binary {
     bool valid;
+    
+    struct data_segment *segments;
+    uint32_t nsegments; 
 
     int actual_cpusubtype;
-    void *load_add;
     prange_t valid_range;
 
     size_t header_offset;
 
-    struct data_segment *segments;
-    uint32_t nsegments; 
     uint32_t last_seg;
     
     struct binary *reexports;

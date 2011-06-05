@@ -113,19 +113,18 @@ void b_prange_load_macho(struct binary *binary, prange_t pr, size_t offset, cons
     binary->_sym = sym;
     binary->_copy_syms = copy_syms;
 
-    binary->load_add = pr.start;
     binary->valid_range = pr;
     binary->header_offset = offset;
 
-    if(offset - pr.size < sizeof(struct mach_header)) {
+    if(offset >= pr.size || offset - pr.size < sizeof(struct mach_header)) {
         die("not enough room");
     }
 
     struct mach_header *hdr = pr.start + offset;
     if(hdr->magic == MH_MAGIC) {
         // thin file
-        binary->mach->hdr = pr.start;
-        if(binary->mach->hdr->cputype != desired_cputype || (binary->mach->hdr->cpusubtype != 0 && desired_cpusubtype != 0 && binary->mach->hdr->cpusubtype != desired_cpusubtype)) {
+        binary->mach->hdr = hdr;
+        if(hdr->cputype != desired_cputype || (hdr->cpusubtype != 0 && desired_cpusubtype != 0 && hdr->cpusubtype != desired_cpusubtype)) {
             die("thin file doesn't have the right architecture");
         }
     } else if(hdr->magic == FAT_CIGAM) {
@@ -141,7 +140,7 @@ void b_prange_load_macho(struct binary *binary, prange_t pr, size_t offset, cons
         while(nfat_arch--) {
             if(SWAP32(arch->cputype) == desired_cputype && (arch->cpusubtype == 0 || desired_cpusubtype == 0 || SWAP32(arch->cpusubtype) == desired_cpusubtype)) {
                 uint32_t fat_offset = SWAP32(arch->offset);
-                if(pr.size - fat_offset > sizeof(struct mach_header)) {
+                if(fat_offset >= pr.size || pr.size - fat_offset < sizeof(struct mach_header)) {
                     die("fat_offset too big");
                 }
                 binary->mach->hdr = pr.start + fat_offset;
@@ -243,7 +242,7 @@ static uint32_t read_uleb128(void **ptr, void *end) {
 
 static inline void *read_bytes(void **ptr, void *end, size_t size) {
     char *p = *ptr;
-    if(p == end || (size_t) ((char *) end - p) < size) die("too big");
+    if((size_t) ((char *) end - p) < size) die("too big");
     *ptr = p + size;
     return p;
 }
