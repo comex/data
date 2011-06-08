@@ -131,7 +131,7 @@ void b_inject_into_running_kernel(struct binary *to_load, uint32_t sysent) {
             uint32_t fs = seg->filesize;
             if(seg->vmsize < fs) fs = seg->vmsize;
             // if prebound, slide = 0
-            vm_offset_t of = (vm_offset_t) rangeconv((range_t) {to_load, seg->vmaddr, seg->filesize}, MUST_FIND).start;
+            vm_offset_t of = (vm_offset_t) rangeconv_off((range_t) {to_load, seg->fileoff, seg->filesize}, MUST_FIND).start;
             vm_address_t ad = seg->vmaddr;
             while(fs > 0) {
                 // complete headbang.
@@ -191,7 +191,7 @@ void b_inject_into_running_kernel(struct binary *to_load, uint32_t sysent) {
                 struct section *sect = &sections[i];
 
                 if((sect->flags & SECTION_TYPE) == S_MOD_INIT_FUNC_POINTERS) {
-                    void **things = rangeconv((range_t) {to_load, sect->addr, sect->size}, MUST_FIND).start;
+                    void **things = rangeconv_off((range_t) {to_load, sect->offset, sect->size}, MUST_FIND).start;
                     for(uint32_t i = 0; i < sect->size / 4; i++) {
                         struct sysent my_sysent = { 1, 0, 0, things[i], NULL, NULL, _SYSCALL_RET_INT_T, 0 };
                         printf("--> %p\n", things[i]);

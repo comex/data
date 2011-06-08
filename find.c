@@ -113,7 +113,7 @@ static addr_t find_data_raw(range_t range, int16_t *buf, ssize_t pattern_size, s
 
 static void parse_pattern(const char *to_find, int16_t buf[128], ssize_t *pattern_size, ssize_t *offset) {
     *pattern_size = 0;
-    *offset = -1;
+    *offset = 0;
     autofree char *to_find_ = strdup(to_find);
     while(to_find_) {
         char *bit = strsep(&to_find_, " ");
@@ -135,9 +135,6 @@ static void parse_pattern(const char *to_find, int16_t buf[128], ssize_t *patter
         if(++*pattern_size >= 128) {
             die("pattern [%s] too big", to_find);
         }
-    }
-    if(*offset == -1) {
-        die("pattern [%s] doesn't have an offset", to_find);
     }
 }
 
@@ -193,7 +190,8 @@ addr_t find_bof(range_t range, addr_t eof, int is_thumb) {
 
     uint8_t *p = rangeconv(range, MUST_FIND).start + (start - range.start);
     addr_t addr = start;
-    for(p -= 4, addr -= 4; addr >= start - 0x1000 && addr >= range.start; p -= 2, addr -= 2) {
+    if(addr & 1) { p--; addr--; }
+    for(p -= 8, addr -= 8; addr >= start - 0x1000 && addr >= range.start; p -= 2, addr -= 2) {
         if(p[1] == 0xb5 && p[3] == 0xaf && is_thumb != 0) {
             return addr | 1;
         } else if(p[2] == 0x2d && p[3] == 0xe9 &&
