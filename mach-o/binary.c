@@ -366,12 +366,14 @@ static addr_t sym(const struct binary *binary, const char *name, int options) {
 }
 
 static void copy_syms(const struct binary *binary, struct data_sym **syms, uint32_t *nsyms, int options) {
-    uint32_t n = *nsyms = binary->mach->nsyms;
+    uint32_t n = (options & PRIVATE_SYM) ? binary->mach->nsyms : binary->mach->ext_nsyms;
     struct data_sym *s = *syms = malloc(sizeof(struct data_sym) * n);
     const struct nlist *nl = (options & PRIVATE_SYM) ? binary->mach->symtab : binary->mach->ext_symtab;
-    for(uint32_t i = 0; i < ((options & PRIVATE_SYM) ? binary->mach->ext_nsyms : binary->mach->nsyms); i++) {
-        *s++ = convert_nlist(binary, nl++, options);
+    for(uint32_t i = 0; i < n; i++) {
+        *s = convert_nlist(binary, nl++, options);
+        if(s->address) s++;
     }
+    *nsyms = s - *syms;
 }
 
 void b_macho_store(struct binary *binary, const char *path) {
