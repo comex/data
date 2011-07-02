@@ -152,7 +152,8 @@ addr_t find_string(range_t range, const char *string, int align, int options) {
     for(unsigned int i = 0; i < len; i++) {
         buf[i+1] = (uint8_t) string[i];
     }
-    addr_t result = find_data_raw(range, buf, len + 2, 1, align, options, string);
+    bool pz = options & PRECEDING_ZERO;
+    addr_t result = find_data_raw(range, pz ? buf : buf + 1, pz ? len + 2 : len + 1, pz ? 1 : 0, align, options, string);
     return result;
 }
 

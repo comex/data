@@ -55,6 +55,9 @@ static void do_load_commands(struct binary *binary) {
     CMD_ITERATE(hdr, cmd) {
         if(cmd->cmd == LC_SEGMENT) {
             struct segment_command *scmd = (void *) cmd;
+            if(scmd->nsects > 1000 || scmd->cmdsize < sizeof(*scmd) + scmd->nsects * sizeof(struct section)) {
+                die("section overflow");
+            }
             seg->file_range = (range_t) {binary, scmd->fileoff, scmd->filesize};
             seg->vm_range = (range_t) {binary, scmd->vmaddr, scmd->vmsize};
             seg->native_segment = cmd;
@@ -436,9 +439,6 @@ void b_inject_into_macho_fd(const struct binary *binary, int fd, addr_t (*find_h
     CMD_ITERATE(binary->mach->hdr, cmd) {
         if(cmd->cmd == LC_SEGMENT) {
             struct segment_command *seg = (void *) cmd;
-            if(seg->nsects > 1000) {
-                die("too many sections");
-            }
             size_t size = sizeof(struct segment_command) + seg->nsects * sizeof(struct section);
             if(size != seg->cmdsize) {
                 die("inconsistent cmdsize");
@@ -467,7 +467,7 @@ void b_inject_into_macho_fd(const struct binary *binary, int fd, addr_t (*find_h
             header_off += size;
             
             struct section *sections = (void *) (seg + 1);
-            for(unsigned int i = 0; i < seg->nsects; i++) {
+            for(uint32_t i = 0; i < seg->nsects; i++) {
                 struct section *sect = &sections[i];
                 if((sect->flags & SECTION_TYPE) == S_MOD_INIT_FUNC_POINTERS) {
                     uint32_t *p = rangeconv((range_t) {binary, sect->addr, sect->size}, MUST_FIND).start;
@@ -599,6 +599,23 @@ range_t b_macho_segrange(const struct binary *binary, const char *segname) {
             struct segment_command *seg = (void *) cmd;
             if(!strncmp(seg->segname, segname, 16)) {
                 return (range_t) {binary, seg->vmaddr, seg->filesize};
+            }
+        }
+    }
+    die("no such segment %s", segname);
+}
+
+range_t b_macho_sectrange(const struct binary *binary, const char *segname, const char *sectname) {
+    CMD_ITERATE(binary->mach->hdr, cmd) {
+        if(cmd->cmd == LC_SEGMENT) {
+            struct segment_command *seg = (void *) cmd;
+            if(!strncmp(seg->segname, segname, 16)) {
+                struct section *sect = (void *) (seg + 1);
+                for(uint32_t i = 0; i < seg->nsects; i++) {
+                    if(!strncmp(sect[i].sectname, sectname, 16)) {
+                        return (range_t) {binary, sect->addr, sect->size};
+                    }
+                }
             }
         }
     }

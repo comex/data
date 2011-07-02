@@ -9,6 +9,8 @@
 #define IMPORTED_SYM 8
 // for rangeconv
 #define EXTEND_RANGE 16
+// for find_string
+#define PRECEDING_ZERO 32
 
 struct dyld_cache_header;
 struct shared_file_mapping_np;
