@@ -456,7 +456,8 @@ void b_inject_into_macho_fd(const struct binary *binary, int fd, addr_t (*find_h
             seg_off = (seg_off + 0xfff) & ~0xfff;
 
             newseg->fileoff = (uint32_t) seg_off;
-            prange_t pr = rangeconv((range_t) {binary, seg->vmaddr, seg->filesize}, MUST_FIND);
+            printf("setting fileoff to %u\n", (uint32_t) seg_off);
+            prange_t pr = rangeconv_off((range_t) {binary, seg->fileoff, seg->filesize}, MUST_FIND);
             if((size_t) pwrite(fd, pr.start, pr.size, seg_off) != pr.size) {
                 die("couldn't write additional segment");
             }
@@ -470,7 +471,7 @@ void b_inject_into_macho_fd(const struct binary *binary, int fd, addr_t (*find_h
             for(uint32_t i = 0; i < seg->nsects; i++) {
                 struct section *sect = &sections[i];
                 if((sect->flags & SECTION_TYPE) == S_MOD_INIT_FUNC_POINTERS) {
-                    uint32_t *p = rangeconv((range_t) {binary, sect->addr, sect->size}, MUST_FIND).start;
+                    uint32_t *p = rangeconv_off((range_t) {binary, sect->offset, sect->size}, MUST_FIND).start;
                     size_t num = sect->size / 4;
                     while(num--) {
                         if(num_init_ptrs < 100) init_ptrs[num_init_ptrs++] = *p++;
@@ -494,19 +495,18 @@ void b_inject_into_macho_fd(const struct binary *binary, int fd, addr_t (*find_h
             die("...but there was no find_hack_func");
         }
         
-        // ldr r3, [pc]; bx r3
-        uint16_t part0[] = {0x4b00, 0x4718};
+        // ldr pc, [pc]
+        uint16_t part0[] = {0xf8df, 0xf000};
 
-        // push {lr}; ldr r3, [pc, #4]; blx r3; b next
+        // push {r0-r3, lr}; adr lr, f+1; ldr pc, a; f: b next; a: .long 0; next:
         // (the address of the init func)
         // 
-        uint16_t part1[] = {0xb500, 0x4b01, 0x4798, 0xe001};
+        uint16_t part1[] = {0xb50f, 0xf20f, 0x0e07, 0xf8df, 0xf004, 0xe001};
         // (bytes_to_move bytes of stuff)
-        // pop {r3}; mov lr, r3
-        static const uint16_t part2[] = {0xbc08, 0x469e};
-        // ldr r3, foo; bx r3
-        static const uint16_t part3[] = {0x4b00, 0x4718};
-
+        // pop {r0-r3, lr}
+        static const uint16_t part2[] = {0xe8bd, 0x400f};
+        // ldr pc, [pc]
+        static const uint16_t part3[] = {0xf8df, 0xf000};
 
         uint32_t bytes_to_move = 12; // don't cut the MRC in two!
 
@@ -533,6 +533,7 @@ void b_inject_into_macho_fd(const struct binary *binary, int fd, addr_t (*find_h
         }
 
         seg_off = (seg_off + 0xfff) & ~0xfff;
+        hdr->ncmds++;
         hdr->sizeofcmds += sizeof(struct segment_command);
         
         newseg->cmd = LC_SEGMENT;
