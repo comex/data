@@ -110,11 +110,16 @@ static void do_symbols(struct binary *binary) {
 }
 
 void b_prange_load_macho(struct binary *binary, prange_t pr, size_t offset, const char *name) {
+    b_prange_load_macho_nosyms(binary, pr, offset, name);
+    do_symbols(binary);
+    binary->_sym = sym;
+    binary->_copy_syms = copy_syms;
+}
+
+void b_prange_load_macho_nosyms(struct binary *binary, prange_t pr, size_t offset, const char *name) {
 #define _arg name
     binary->valid = true;
     binary->mach = calloc(sizeof(*binary->mach), 1);
-    binary->_sym = sym;
-    binary->_copy_syms = copy_syms;
 
     binary->valid_range = pr;
     binary->header_offset = offset;
@@ -166,7 +171,6 @@ void b_prange_load_macho(struct binary *binary, prange_t pr, size_t offset, cons
     binary->actual_cpusubtype = binary->mach->hdr->cpusubtype;
 
     do_load_commands(binary);
-    do_symbols(binary);
 #undef _arg
 }
 

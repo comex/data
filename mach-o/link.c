@@ -21,22 +21,37 @@ static uint32_t b_lookup_nlist(const struct binary *load, const struct binary *t
     return sym;
 }
 
-static void relocate_area(const struct binary *load, const struct binary *target, lookupsym_t lookup_sym, uint32_t slide, uint32_t reloff, uint32_t nreloc) {
+static void relocate_area(const struct binary *load, const struct binary *target, enum reloc_mode mode, lookupsym_t lookup_sym, uint32_t slide, uint32_t reloff, uint32_t nreloc) {
     struct relocation_info *things = rangeconv_off((range_t) {load, reloff, nreloc * sizeof(struct relocation_info)}, MUST_FIND).start;
     for(uint32_t i = 0; i < nreloc; i++) {
-        //assert(!things[i].r_pcrel);
         assert(things[i].r_length == 2);
-        uint32_t *p = rangeconv((range_t) {load, things[i].r_address, 4}, MUST_FIND).start;
+        uint32_t address = things[i].r_address;
+        if(address == 0) continue;
+        uint32_t *p = rangeconv((range_t) {load, address, 4}, MUST_FIND).start;
+
         uint32_t value;
         if(things[i].r_extern) {
+            if(mode == RELOC_LOCAL_ONLY) continue;
             value = b_lookup_nlist(load, target, lookup_sym, things[i].r_symbolnum);
         } else {
+            if(mode == RELOC_EXTERN_ONLY) continue;
             // *shrug*
             value = slide;
         }
+
+        things[i].r_address = 0;
+
+        if(mode == RELOC_EXTERN_ONLY && things[i].r_type != ARM_RELOC_VANILLA) {
+            die("non-VANILLA relocation but we are relocating without knowing the slide; use __attribute__((long_call)) to get rid of these");
+        }
         switch(things[i].r_type) {
         case ARM_RELOC_VANILLA:
-            *p += value;
+            //printf("%x, %x += %x\n", address, *p, value); 
+            if(rangeconv((range_t) {load, *p, 0}, 0).start) {
+                // when dyld_stub_binding_helper (which would just crash, btw) is present, entries in the indirect section point to it; usually this increments to point to the right dyld_stub_binding_helper, then that's clobbered by the indirect code.  when we do prelinking, the indirect code runs first, so we add this check (easier than actually checking that it's not in the indirect section) to make sure we're not relocating nonsense.
+                *p += value;
+            }
+            //else printf("skipping %x\n", *p);
             break;
         case ARM_RELOC_BR24: {
             if(!things[i].r_pcrel) die("weird relocation");
@@ -68,7 +83,7 @@ static void relocate_area(const struct binary *load, const struct binary *target
     }
 }
 
-void b_relocate(struct binary *load, const struct binary *target, lookupsym_t lookup_sym, uint32_t slide) {
+void b_relocate(struct binary *load, const struct binary *target, enum reloc_mode mode, lookupsym_t lookup_sym, uint32_t slide) {
     CMD_ITERATE(load->mach->hdr, cmd) {
         switch(cmd->cmd) {
         case LC_SYMTAB:
@@ -84,8 +99,8 @@ void b_relocate(struct binary *load, const struct binary *target, lookupsym_t lo
     assert(load->mach->symtab);
     assert(load->mach->dysymtab);
     
-    relocate_area(load, target, lookup_sym, slide, load->mach->dysymtab->locreloff, load->mach->dysymtab->nlocrel);
-    relocate_area(load, target, lookup_sym, slide, load->mach->dysymtab->extreloff, load->mach->dysymtab->nextrel);
+    if(mode != RELOC_EXTERN_ONLY) relocate_area(load, target, mode, lookup_sym, slide, load->mach->dysymtab->locreloff, load->mach->dysymtab->nlocrel);
+    if(mode != RELOC_LOCAL_ONLY) relocate_area(load, target, mode, lookup_sym, slide, load->mach->dysymtab->extreloff, load->mach->dysymtab->nextrel);
 
     CMD_ITERATE(load->mach->hdr, cmd) {
         if(cmd->cmd == LC_SEGMENT) {
@@ -106,13 +121,17 @@ void b_relocate(struct binary *load, const struct binary *target, lookupsym_t lo
                         uint32_t sym = indirect[i];
                         switch(sym) {
                         case INDIRECT_SYMBOL_LOCAL:
+                            if(mode == RELOC_EXTERN_ONLY) continue;
                             things[i] += slide;
                             break;
                         case INDIRECT_SYMBOL_ABS:
                             break;
                         default:
+                            if(mode == RELOC_LOCAL_ONLY) continue;
+                            //printf("setting indirect symbol %x\n", sect->addr + 4*i);
                             things[i] = b_lookup_nlist(load, target, lookup_sym, sym);
                         }
+                        indirect[i] = INDIRECT_SYMBOL_ABS;
                     }
                     break;
                 }
@@ -130,10 +149,10 @@ void b_relocate(struct binary *load, const struct binary *target, lookupsym_t lo
                     die("unrecognized section type %02x", type);
                 }
                 
-                relocate_area(load, target, lookup_sym, slide, sect->reloff, sect->nreloc);
-                sect->addr += slide;
+                relocate_area(load, target, mode, lookup_sym, slide, sect->reloff, sect->nreloc);
+                if(mode != RELOC_EXTERN_ONLY) sect->addr += slide;
             }
-            seg->vmaddr += slide;
+            if(mode != RELOC_EXTERN_ONLY) seg->vmaddr += slide;
         }
     }
 }

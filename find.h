@@ -18,7 +18,11 @@ uint32_t resolve_ldr(const struct binary *binary, addr_t addr);
 
 addr_t find_bl(range_t *range);
 
-addr_t b_find_anywhere(const struct binary *binary, const char *to_find, int align, int options);
+#define b_find_anywhere b_find_data_anywhere
+addr_t b_find_data_anywhere(const struct binary *binary, const char *to_find, int align, int options);
+addr_t b_find_string_anywhere(const struct binary *binary, const char *string, int align, int options);
+addr_t b_find_bytes_anywhere(const struct binary *binary, const char *bytes, size_t len, int align, int options);
+addr_t b_find_int32_anywhere(const struct binary *binary, uint32_t number, int options);
 
 struct findmany *findmany_init(range_t range);
 void findmany_add(addr_t *result, struct findmany *fm, const char *to_find);

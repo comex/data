@@ -30,6 +30,7 @@ __attribute__((const)) range_t b_macho_sectrange(const struct binary *binary, co
 void b_macho_store(struct binary *binary, const char *path);
 
 void b_prange_load_macho(struct binary *binary, prange_t range, size_t offset, const char *name);
+void b_prange_load_macho_nosyms(struct binary *binary, prange_t range, size_t offset, const char *name);
 
 uint32_t b_allocate_from_macho_fd(int fd);
 void b_inject_into_macho_fd(const struct binary *binary, int fd, addr_t (*find_hack_func)(const struct binary *binary));

@@ -284,18 +284,22 @@ addr_t find_bl(range_t *range) {
     return baseaddr + diff;
 }
 
-addr_t b_find_anywhere(const struct binary *binary, const char *to_find, int align, int options) {
-    for(uint32_t i = 0; i < binary->nsegments; i++) {
-        range_t range = binary->segments[i].vm_range;
-        addr_t result = find_data(range, to_find, align, options & ~MUST_FIND);
-        if(result) return result;
-    }
-    if(options & MUST_FIND) {
-        die("didn't find [%s] anywhere", to_find);
-    } else {
-        return 0;
-    }
+#define unparen(args...) args
+#define find_anywhere_func(name, args1, args2) \
+addr_t b_find_##name##_anywhere(const struct binary *binary, unparen args1, int options) { \
+    uint32_t end = binary->nsegments - 1; \
+    for(uint32_t i = 0; i <= end; i++) { \
+        range_t range = binary->segments[i].vm_range; \
+        addr_t result = find_##name(range, unparen args2, i == end ? options : options & ~MUST_FIND); \
+        if(result) return result; \
+    } \
+    return 0; /* won't reach */ \
 }
+
+find_anywhere_func(data, (const char *to_find, int align), (to_find, align))
+find_anywhere_func(string, (const char *string, int align), (string, align))
+find_anywhere_func(bytes, (const char *bytes, size_t len, int align), (bytes, len, align))
+find_anywhere_func(int32, (uint32_t number), (number))
 
 struct pattern {
     int16_t buf[128];
