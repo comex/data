@@ -124,7 +124,7 @@ prange_t parse_img3(prange_t img3, uint32_t *key_bits) {
     assert(hdr->magic == (uint32_t) 'Img3');
     assert(hdr->size <= img3.size);
     void *end = (char *)(img3.start) + hdr->size;
-    assert(hdr->name == (uint32_t) 'krnl');
+    //assert(hdr->name == (uint32_t) 'krnl');
     struct img3_tag *tag = (void *) (hdr + 1);
     struct img3_tag *tag2;
     prange_t result;
