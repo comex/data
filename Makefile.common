@@ -17,12 +17,14 @@ endif
 SDK_GCC = /Developer/Platforms/iPhoneOS.platform/Developer/usr/bin/gcc-4.2 -isysroot /Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS4.3.sdk/ -mapcs-frame -fomit-frame-pointer -mthumb
 
 GCC_native = gcc
+GCC_mp = gcc-mp-4.6
 GCC_universal = gcc -arch i386 -arch x86_64
 GCC_armv6 = $(SDK_GCC) -arch armv6
 GCC_armv7 = $(SDK_GCC) -arch armv7
 GCC_arm_universal = $(SDK_GCC) -arch armv6 -arch armv7
 
 GXX_native = g++-mp-4.6
+GXX_mp = g++-mp-4.6
 
 # C++
 
@@ -40,7 +42,7 @@ GCC ?= $(GCC_$(BUILD))
 ifneq "$(findstring g++,$(GCC))" ""
 override CFLAGS += -std=gnu++0x -fpermissive -Drestrict=
 else
-override CFLAGS += -std=gnu99 -Werror -Wimplicit
+override CFLAGS += -std=gnu99 -Werror -Wimplicit -Wno-multichar
 endif
 
 override GCC := $(GCC) $(CFLAGS)
@@ -60,7 +62,7 @@ $(OUTDIR)/%.o: %.cpp *.h
 	$(GXX) -c -o $@ $<
 
 .clean:
-	rm -rf native universal armv6 armv7 arm_universal
+	rm -rf native universal armv6 armv7 arm_universal mp
 
 .data:
 	make -C $(DATA) BUILD=$(BUILD)

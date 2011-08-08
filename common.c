@@ -72,16 +72,16 @@ uint32_t parse_hex_uint32(const char *string) {
 
 prange_t load_file(const char *filename, bool rw, mode_t *mode) {
 #define _arg filename
-    if(mode) {
-        struct stat st;
-        if(lstat(filename, &st)) {
-            edie("could not lstat");
-        }
-        *mode = st.st_mode;
-    }
     int fd = open(filename, O_RDONLY);
     if(fd == -1) {
         edie("could not open");
+    }
+    if(mode) {
+        struct stat st;
+        if(fstat(fd, &st)) {
+            edie("could not lstat");
+        }
+        *mode = st.st_mode;
     }
     return load_fd(fd, rw);
 #undef _arg

@@ -61,7 +61,9 @@ prange_t decrypt_and_decompress(uint32_t key_bits, prange_t key, prange_t iv, pr
     }
     struct comp_header *ch = outbuf;
     if(!(ch->signature == 0x706d6f63 && ch->compression_type == 0x73737a6c)) {
-        die("nonsense decrypted result is not complzss (%x %x)", ch->signature, ch->compression_type);
+        // die("nonsense decrypted result is not complzss (%x %x)", ch->signature, ch->compression_type);
+        // maybe it's not compressed
+        return (prange_t) {outbuf, outbuf_len};
     }
     uint32_t length_compressed = swap32(ch->length_compressed);
     uint32_t length_uncompressed = swap32(ch->length_uncompressed);
@@ -151,9 +153,5 @@ prange_t parse_img3(prange_t img3, uint32_t *key_bits) {
         tag = tag2;
     }
     return result;
-}
-
-prange_t parse_img3_file(char *filename, uint32_t *key_bits) {
-    return parse_img3(load_file(filename, false, NULL), key_bits);
 }
 #endif
