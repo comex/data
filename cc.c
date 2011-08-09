@@ -74,6 +74,7 @@ static const struct arch_flag {
 
 static prange_t parse_fat(prange_t input, const char *arch) {
 #ifdef __arm__
+    (void) arch;
     return input;
 #else
     if(input.size < sizeof(struct fat_header)) return input;
@@ -224,7 +225,7 @@ static prange_t parse_img3(prange_t img3, const char *key, const char *iv) {
     prange_t result;
     memset(&result, 0, sizeof(result)); // not actually necessary, >:( gcc
     bool have_data = false, have_kbag = false;
-    uint32_t key_bits;
+    uint32_t key_bits = 0;
     while(!(have_data && have_kbag)) {
         if((void *)tag->data >= end) {
             // out of tags
