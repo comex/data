@@ -49,6 +49,8 @@ struct binary {
 
     addr_t (*_sym)(const struct binary *binary, const char *name, int options);
     void (*_copy_syms)(const struct binary *binary, struct data_sym **syms, uint32_t *nsyms, int options);
+
+    uint32_t reserved[8];
 };
 
 __BEGIN_DECLS

@@ -50,7 +50,7 @@ static void do_load_commands(struct binary *binary) {
             die("cmdsize (%u) too small for cmd (0x%x)", cmd->cmdsize, cmd->cmd);
         }
     }
-    if(nsegs >= MAX_ARRAY(struct data_segment)) {
+    if(nsegs > MAX_ARRAY(struct data_segment)) {
         die("segment overflow");
     }
     binary->nsegments = nsegs;
@@ -78,7 +78,7 @@ static void do_symbols(struct binary *binary) {
             }
         } else if(cmd->cmd == LC_SYMTAB) {
             struct symtab_command *scmd = (void *) cmd;
-            if(scmd->nsyms >= MAX_ARRAY(struct data_sym) || scmd->nsyms >= MAX_ARRAY(struct nlist)) {
+            if(scmd->nsyms > MAX_ARRAY(struct data_sym) || scmd->nsyms > MAX_ARRAY(struct nlist)) {
                 die("ridiculous number of symbols (%u)", scmd->nsyms);
             }
             binary->mach->nsyms = scmd->nsyms;
@@ -98,7 +98,7 @@ static void do_symbols(struct binary *binary) {
     struct dysymtab_command *dc;
     if(binary->mach->symtab && (dc = binary->mach->dysymtab)) {
 #define do_it(isym, nsym, x_symtab, x_nsyms) \
-        if(dc->isym <= binary->mach->nsyms && dc->nsym <= binary->mach->nsyms - dc->isym && dc->nsym < MAX_ARRAY(struct nlist) && dc->nsym < MAX_ARRAY(struct data_sym)) { \
+        if(dc->isym <= binary->mach->nsyms && dc->nsym <= binary->mach->nsyms - dc->isym && dc->nsym <= MAX_ARRAY(struct nlist) && dc->nsym <= MAX_ARRAY(struct data_sym)) { \
             binary->mach->x_symtab = binary->mach->symtab + dc->isym; \
             binary->mach->x_nsyms = dc->nsym; \
         } else { \
