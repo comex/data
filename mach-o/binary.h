@@ -10,8 +10,8 @@ struct mach_binary {
     uint32_t nsyms;
     
     // for b_sym (external stuff)
-    struct nlist *ext_symtab;
-    uint32_t ext_nsyms;
+    struct nlist *ext_symtab, *imp_symtab;
+    uint32_t ext_nsyms, imp_nsyms;
 
     // alternatively
     prange_t export_trie;

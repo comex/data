@@ -50,12 +50,15 @@ static void do_load_commands(struct binary *binary) {
             die("cmdsize (%u) too small for cmd (0x%x)", cmd->cmdsize, cmd->cmd);
         }
     }
+    if(nsegs >= MAX_ARRAY(struct data_segment)) {
+        die("segment overflow");
+    }
     binary->nsegments = nsegs;
     struct data_segment *seg = binary->segments = malloc(sizeof(*binary->segments) * binary->nsegments);
     CMD_ITERATE(hdr, cmd) {
         if(cmd->cmd == LC_SEGMENT) {
             struct segment_command *scmd = (void *) cmd;
-            if(scmd->nsects > 1000 || scmd->cmdsize < sizeof(*scmd) + scmd->nsects * sizeof(struct section)) {
+            if(scmd->nsects > MAX_ARRAY(struct section) || scmd->cmdsize < sizeof(*scmd) + scmd->nsects * sizeof(struct section)) {
                 die("section overflow");
             }
             seg->file_range = (range_t) {binary, scmd->fileoff, scmd->filesize};
@@ -75,7 +78,7 @@ static void do_symbols(struct binary *binary) {
             }
         } else if(cmd->cmd == LC_SYMTAB) {
             struct symtab_command *scmd = (void *) cmd;
-            if(scmd->nsyms >= 0x1000000) {
+            if(scmd->nsyms >= MAX_ARRAY(struct data_sym) || scmd->nsyms >= MAX_ARRAY(struct nlist)) {
                 die("ridiculous number of symbols (%u)", scmd->nsyms);
             }
             binary->mach->nsyms = scmd->nsyms;
@@ -92,17 +95,18 @@ static void do_symbols(struct binary *binary) {
             binary->mach->export_trie = rangeconv_off((range_t) {binary, dcmd->export_off, dcmd->export_size}, MUST_FIND);
         }
     }
-    if(binary->mach->symtab && binary->mach->dysymtab) {
-        uint32_t iextdefsym = binary->mach->dysymtab->iextdefsym;
-        uint32_t nextdefsym = binary->mach->dysymtab->nextdefsym;
-        if(iextdefsym >= binary->mach->nsyms) {
-            die("bad iextdefsym (%u)", iextdefsym);
+    struct dysymtab_command *dc;
+    if(binary->mach->symtab && (dc = binary->mach->dysymtab)) {
+#define do_it(isym, nsym, x_symtab, x_nsyms) \
+        if(dc->isym <= binary->mach->nsyms && dc->nsym <= binary->mach->nsyms - dc->isym && dc->nsym < MAX_ARRAY(struct nlist) && dc->nsym < MAX_ARRAY(struct data_sym)) { \
+            binary->mach->x_symtab = binary->mach->symtab + dc->isym; \
+            binary->mach->x_nsyms = dc->nsym; \
+        } else { \
+            fprintf(stderr, "warning: bad %s/%s (%u, %u)\n", #isym, #nsym, dc->isym, dc->nsym); \
         }
-        if(nextdefsym > binary->mach->nsyms - iextdefsym) {
-            die("bad nextdefsym (%u)", nextdefsym);
-        }
-        binary->mach->ext_symtab = binary->mach->symtab + iextdefsym;
-        binary->mach->ext_nsyms = nextdefsym;
+        do_it(iextdefsym, nextdefsym, ext_symtab, ext_nsyms)
+        do_it(iundefsym, nundefsym, imp_symtab, imp_nsyms)
+#undef do_it
     } else {
         binary->mach->ext_symtab = binary->mach->symtab;
         binary->mach->ext_nsyms = binary->mach->nsyms;
@@ -141,7 +145,7 @@ void b_prange_load_macho_nosyms(struct binary *binary, prange_t pr, size_t offse
         struct fat_header *fathdr = (void *) hdr;
         struct fat_arch *arch = (void *)(fathdr + 1);
         uint32_t nfat_arch = SWAP32(fathdr->nfat_arch);
-        if(nfat_arch > 1000 || pr.size < sizeof(struct fat_header) + nfat_arch * sizeof(struct fat_arch)) {
+        if((pr.size - sizeof(struct fat_header)) / sizeof(struct fat_arch) < nfat_arch) {
             die("fat header is too small");
         }
         binary->mach->hdr = NULL;
@@ -373,12 +377,24 @@ static addr_t sym(const struct binary *binary, const char *name, int options) {
 }
 
 static void copy_syms(const struct binary *binary, struct data_sym **syms, uint32_t *nsyms, int options) {
-    uint32_t n = (options & PRIVATE_SYM) ? binary->mach->nsyms : binary->mach->ext_nsyms;
+    uint32_t n;
+    const struct nlist *nl;
+    bool can_be_zero = false;
+    if(options & PRIVATE_SYM) {
+        nl = binary->mach->symtab;
+        n = binary->mach->nsyms;
+    } else if(options & IMPORTED_SYM) {
+        nl = binary->mach->imp_symtab;
+        n = binary->mach->imp_nsyms;
+        can_be_zero = true;
+    } else {
+        nl = binary->mach->ext_symtab;
+        n = binary->mach->ext_nsyms;
+    }
     struct data_sym *s = *syms = malloc(sizeof(struct data_sym) * n);
-    const struct nlist *nl = (options & PRIVATE_SYM) ? binary->mach->symtab : binary->mach->ext_symtab;
     for(uint32_t i = 0; i < n; i++) {
         *s = convert_nlist(binary, nl++, options);
-        if(s->address) s++;
+        if(can_be_zero || s->address) s++;
     }
     *nsyms = s - *syms;
 }

@@ -5,9 +5,6 @@
 
 //#define PROFILING
 
-#define swap32 __builtin_bswap32
-#define SWAP32(x) ((typeof(x)) swap32((uint32_t) (x)))
-
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -21,6 +18,14 @@
 #ifdef PROFILING
 #include <time.h>
 #endif
+
+#define swap32 __builtin_bswap32
+#define SWAP32(x) ((typeof(x)) swap32((uint32_t) (x)))
+
+// this function gets rid of compiler warnings about "comparison always true" - if that is true (because size_t is 64-bit on this architecture), great, don't bother me about it
+__attribute__((always_inline)) static inline size_t _id(size_t x) { return x; }
+#define MAX_ARRAY(typ) _id(~(size_t)0 / sizeof(typ))
+
 
 static inline void _free_cleanup(void *pp) {
     void *p = *((void **) pp);

@@ -5,7 +5,7 @@ ifeq "$(wildcard /private)" ""
 DYNAMICLIB = -shared
 DYLIB = so
 else
-DYNAMICLIB  = -dynamiclib
+DYNAMICLIB  = -dynamiclib -ldylib1.o
 DYLIB = dylib
 override CFLAGS += -DIMG3_SUPPORT -dead_strip
 endif
@@ -14,7 +14,7 @@ ifneq "$(NDEBUG)" "1"
 override CFLAGS += -g3
 endif
 
-SDK_GCC = /Developer/Platforms/iPhoneOS.platform/Developer/usr/bin/gcc-4.2 -isysroot /Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS4.3.sdk/ -mapcs-frame -fomit-frame-pointer -mthumb
+SDK_GCC = /Developer/Platforms/iPhoneOS.platform/Developer/usr/bin/gcc-4.2 -isysroot /Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS4.3.sdk/ -miphoneos-version-min=4.0 -mapcs-frame -fomit-frame-pointer -mthumb
 
 GCC_native = gcc
 GCC_mp = gcc-mp-4.6
