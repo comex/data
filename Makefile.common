@@ -9,7 +9,7 @@ DYNAMICLIB  = -dynamiclib -ldylib1.o
 DYLIB = dylib
 override CFLAGS += -DIMG3_SUPPORT -dead_strip
 endif
-override CFLAGS += -Os -Wall -Wextra -Wno-parentheses -Wreturn-type
+override CFLAGS := -Os -Wall -Wextra -Wno-parentheses -Wreturn-type $(CFLAGS)
 ifneq "$(NDEBUG)" "1"
 override CFLAGS += -g3
 endif

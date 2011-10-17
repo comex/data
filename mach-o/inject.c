@@ -1,4 +1,9 @@
-#include "binary.h"
+#include "inject.h"
+#include "read_dyld_info.h"
+#include "headers/loader.h"
+#include "headers/nlist.h"
+#include "headers/reloc.h"
+#include <stddef.h>
 
 struct linkedit_info {
     arange_t linkedit_range;
@@ -9,20 +14,24 @@ struct linkedit_info {
     // 1-3. {local, extdef, undef}sym
     // 4-5. {locrel, extrel}
     // 6. indirect syms
+    // 7-9. dyld info {, weak_, lazy_}bind
     // [hey, I will just assume that nobody has any section relocations because it makes things simpler!]
     // things we need to update:
     // - symbols reference string table
     // - relocations reference symbols
     // - indirect syms reference symbols
     // - (section data references indirect syms)
-#define NMOVEME 7
+#define NMOVEME 10
     struct moveme {
         uint32_t *off, *size;
+        uint32_t off_base;
         uint32_t size_divider;
+        //uint32_t orig_size;
     } moveme[NMOVEME];
 
     struct symtab_command *symtab;
     struct dysymtab_command *dysymtab;
+    struct dyld_info_command *dyld_info;
 };
 
 static const struct moveref {
@@ -34,8 +43,8 @@ static const struct moveref {
               {0, 0, offsetof(struct nlist, n_un.n_strx)},
               {0, 0, offsetof(struct nlist, n_un.n_strx)},
               // hooray for little endian
-    /* 4-5 */ {1, 3, offsetof(struct relocation_info, r_symbolnum},
-              {1, 3, offsetof(struct relocation_info, r_symbolnum},
+    /* 4-5 */ {1, 3, 4},
+              {1, 3, 4},
               // the whole thing is a symbol number
     /* 6 */   {1, 3, 0}
 };
@@ -67,20 +76,24 @@ static bool catch_linkedit(struct mach_header *hdr, struct linkedit_info *li) {
             li->moveme[0].size_divider = 1;
 
             break;
+        }
         case LC_DYSYMTAB: {
             struct dysymtab_command *dys = (void *) cmd;
             li->dysymtab = dys;
 
             li->moveme[1].off = &dys->ilocalsym;
             li->moveme[1].size = &dys->nlocalsym;
+            li->moveme[1].off_base = li->symtab->symoff;
             li->moveme[1].size_divider = sizeof(struct nlist);
 
             li->moveme[2].off = &dys->iextdefsym;
             li->moveme[2].size = &dys->nextdefsym;
+            li->moveme[2].off_base = li->symtab->symoff;
             li->moveme[2].size_divider = sizeof(struct nlist);
 
             li->moveme[3].off = &dys->iundefsym;
             li->moveme[3].size = &dys->nundefsym;
+            li->moveme[3].off_base = li->symtab->symoff;
             li->moveme[3].size_divider = sizeof(struct nlist);
 
             li->moveme[4].off = &dys->locreloff;
@@ -98,18 +111,92 @@ static bool catch_linkedit(struct mach_header *hdr, struct linkedit_info *li) {
             break;
         }
         case LC_DYLD_INFO_ONLY:
-        case LC_DYLD_INFO:
+        case LC_DYLD_INFO: {
+            struct dyld_info_command *di = (void *) cmd;
+            li->dyld_info = di;
+
+            di->rebase_off = 0;
+            di->rebase_size = 0;
+
+            li->moveme[7].off = &di->bind_off;
+            li->moveme[7].size = &di->bind_size;
+            li->moveme[7].size_divider = 1;
+
+            li->moveme[8].off = &di->weak_bind_off;
+            li->moveme[8].size = &di->weak_bind_size;
+            li->moveme[8].size_divider = 1;
+
+            li->moveme[9].off = &di->lazy_bind_off;
+            li->moveme[9].size = &di->lazy_bind_size;
+            li->moveme[9].size_divider = 1;
+            break;
+        }
         case LC_CODE_SIGNATURE:
         case LC_SEGMENT_SPLIT_INFO:
-        case LC_FUNCTION_STARTS:
+        case 38 /*LC_FUNCTION_STARTS*/:
             // hope you didn't need that stuff <3
             cmd->cmd = 0x1000;
             break;
         }
+        // xxx - this should be immutable but we are overwriting it
     }
     // we want both binaries to have a symtab and dysymtab, makes things easier
-    if(!li->symtab || !li->dysymab) die("symtab/dysymtab missing");
+    if(!li->symtab || !li->dysymtab) die("symtab/dysymtab missing");
     return ret;
+}
+
+static void handle_retarded_dyld_info(void *ptr, uint32_t size, int num_segments, bool kill_dones) {
+    // seriously, take a look at dyldinfo.cpp from ld64, especially, in this case, the separate handing of different LC_DYLD_INFO sections and the different meaning of BIND_OPCODE_DONE in lazy bind vs the other binds
+    // not to mention the impossibility of reading this data without knowing every single opcode
+    // and the lack of nop
+    void *end = ptr + size;
+    while(ptr != end) { 
+        uint8_t byte = read_int(&ptr, end, uint8_t);
+        uint8_t immediate = byte & BIND_IMMEDIATE_MASK;
+        uint8_t opcode = byte & BIND_OPCODE_MASK;
+        char c;
+        switch(opcode){
+        // things we actually care about:
+        case BIND_OPCODE_DONE:
+            if(kill_dones) {
+                *((uint8_t *) ptr - 1) = BIND_OPCODE_SET_TYPE_IMM | BIND_TYPE_POINTER;
+            }
+            break;
+        case BIND_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB: {
+            // update the segment number
+            uint8_t *p = ptr - 1;
+            printf("incr'ing %u by %u\n", (unsigned int) immediate, (unsigned int) num_segments);
+            *p = (*p & BIND_OPCODE_MASK) | (immediate + num_segments);
+            read_uleb128(&ptr, end);
+            break;
+        }
+        // things we have to get through
+        case BIND_OPCODE_SET_SYMBOL_TRAILING_FLAGS_IMM:
+            do {
+                c = read_int(&ptr, end, char);
+            } while(c);
+            break;
+        case BIND_OPCODE_SET_ADDEND_SLEB: // actually sleb (and I like how read_uleb128 and read_sleb128 in dyldinfo.cpp are completely separate functions), but read_uleb128 should work
+        case BIND_OPCODE_ADD_ADDR_ULEB:
+        case BIND_OPCODE_DO_BIND_ADD_ADDR_ULEB:
+            read_uleb128(&ptr, end);
+            break;
+
+        case BIND_OPCODE_DO_BIND_ULEB_TIMES_SKIPPING_ULEB:
+            read_uleb128(&ptr, end);
+            read_uleb128(&ptr, end);
+            break;
+        }
+    }
+}
+
+// this is only meaningful on i386
+static void fixup_stub_helpers(void *base, size_t size, uint32_t incr) {
+    while(size >= 0xa + 0xa) {
+        *((uint32_t *) (base + 1)) += incr; 
+        base += 0xa;
+        size -= 0xa;
+    }
 }
 
 void b_inject_into_macho_fd(const struct binary *binary, int fd, addr_t (*find_hack_func)(const struct binary *binary), bool userland) {
@@ -151,15 +238,18 @@ void b_inject_into_macho_fd(const struct binary *binary, int fd, addr_t (*find_h
     struct linkedit_info li[2];
     if(userland) {
         if(catch_linkedit(binary->mach->hdr, &li[0])) {
-            load_li.linkedit_ptr = rangeconv_off((range_t) {binary, li[0].linkedit_range.start, li[0].linkedit_range.size});
+            li[0].linkedit_ptr = rangeconv_off((range_t) {binary, li[0].linkedit_range.start, li[0].linkedit_range.size}, MUST_FIND).start;
         }
         if(catch_linkedit(hdr, &li[1])) {
-            li[1].linkedit_base = mmap(NULL, li[1].linkedit_range.size, PROT_READ, MAP_PRIVATE, fd, li[1].linkedit_range.start);
-            if(li[1].linkedit_base == MAP_FAILED) edie("could not map target __LINKEDIT");
-            if(li[1].linkedit_range.start + li[1].linkedit_range.size == seg_off) {
+            li[1].linkedit_ptr = mmap(NULL, li[1].linkedit_range.size, PROT_READ, MAP_PRIVATE, fd, li[1].linkedit_range.start);
+            if(li[1].linkedit_ptr == MAP_FAILED) edie("could not map target __LINKEDIT");
+            if((off_t) (li[1].linkedit_range.start + li[1].linkedit_range.size) == seg_off) {
                 seg_off = li[1].linkedit_range.start;
                 ftruncate(fd, seg_off);
             }
+        }
+        if((li[0].dyld_info != 0) != (li[1].dyld_info != 0)) {
+            die("LC_DYLD_INFO(_ONLY) should be in both or neither");
         }
     }
 
@@ -170,9 +260,12 @@ void b_inject_into_macho_fd(const struct binary *binary, int fd, addr_t (*find_h
     uint32_t *reserved1s[100];
     int num_reserved1s = 0;
 
+    int num_segments;
     if(userland) {
+        num_segments = 0;
         CMD_ITERATE(hdr, cmd) {
             if(cmd->cmd == LC_SEGMENT) {
+                num_segments++;
                 struct segment_command *seg = (void *) cmd;
                 struct section *sections = (void *) (seg + 1);
                 for(uint32_t i = 0; i < seg->nsects; i++) {
@@ -180,8 +273,17 @@ void b_inject_into_macho_fd(const struct binary *binary, int fd, addr_t (*find_h
                     switch(sect->flags & SECTION_TYPE) {
                     case S_NON_LAZY_SYMBOL_POINTERS:
                     case S_LAZY_SYMBOL_POINTERS:
+                    case S_SYMBOL_STUBS:
                         if(num_reserved1s < 100) reserved1s[num_reserved1s++] = &sect->reserved1;
                         break;
+                    }
+
+                    // xxx - what happens if there is no dyld_info?
+                    if(li[0].dyld_info && !strcmp(sect->sectname, "__stub_helper")) {
+                        void *segdata = mmap(NULL, seg->filesize, PROT_READ | PROT_WRITE, MAP_SHARED, fd, seg->fileoff);
+                        if(segdata == MAP_FAILED) edie("could not map stub_helper");
+                        fixup_stub_helpers(segdata + sect->offset - seg->fileoff, sect->size, *li[0].moveme[9].size);
+                        munmap(segdata, seg->filesize);
                     }
                 }
             }
@@ -212,17 +314,16 @@ void b_inject_into_macho_fd(const struct binary *binary, int fd, addr_t (*find_h
 
             header_off += size;
             
-            if(!userland) {
-                struct section *sections = (void *) (seg + 1);
-                for(uint32_t i = 0; i < seg->nsects; i++) {
-                    struct section *sect = &sections[i];
-                    // ZEROFILL is okay because iBoot always zeroes vmsize - filesize
-                    if((sect->flags & SECTION_TYPE) == S_MOD_INIT_FUNC_POINTERS) {
-                        uint32_t *p = rangeconv_off((range_t) {binary, sect->offset, sect->size}, MUST_FIND).start;
-                        size_t num = sect->size / 4;
-                        while(num--) {
-                            if(num_init_ptrs < 100) init_ptrs[num_init_ptrs++] = *p++;
-                        }
+            struct section *sections = (void *) (newseg + 1);
+            for(uint32_t i = 0; i < seg->nsects; i++) {
+                struct section *sect = &sections[i];
+                sect->offset = newseg->fileoff + sect->addr - newseg->vmaddr;
+                // ZEROFILL is okay because iBoot always zeroes vmsize - filesize
+                if(!userland && (sect->flags & SECTION_TYPE) == S_MOD_INIT_FUNC_POINTERS) {
+                    uint32_t *p = rangeconv_off((range_t) {binary, sect->offset, sect->size}, MUST_FIND).start;
+                    size_t num = sect->size / 4;
+                    while(num--) {
+                        if(num_init_ptrs < 100) init_ptrs[num_init_ptrs++] = *p++;
                     }
                 }
             }
@@ -332,7 +433,7 @@ void b_inject_into_macho_fd(const struct binary *binary, int fd, addr_t (*find_h
         uint32_t newsize = 0;
         for(int i = 0; i < NMOVEME; i++) {
             for(int l = 0; l < 2; l++) {
-                newsize += *li[l].moveme[i].size;
+                newsize += *li[l].moveme[i].size * li[l].moveme[i].size_divider;
             }
         }
 
@@ -340,28 +441,31 @@ void b_inject_into_macho_fd(const struct binary *binary, int fd, addr_t (*find_h
             uint32_t linkedit_off = ADD_SEGMENT(newsize);
             autofree char *linkedit = malloc(newsize);
             uint32_t off = 0;
+            
             for(int i = 0; i < NMOVEME; i++) {
                 uint32_t s = 0;
                 for(int l = 0; l < 2; l++) {
                     struct moveme *m = &li[l].moveme[i];
-                    uint32_t to_copy = *m->size * m->size_divder;
-                    memcpy(linkedit + off + s, li[l].linkedit_ptr + (*m->off - li[l].linkedit_range.start), to_copy);
-                    if(l == 1 && i > 0) {
+                    //m->orig_size = *m->size;
+                    uint32_t to_copy = *m->size * m->size_divider;
+                    memcpy(linkedit + off + s, li[l].linkedit_ptr - li[l].linkedit_range.start + *m->off * (m->off_base ? m->size_divider : 1) + m->off_base, to_copy);
+                    if(l == 1 && (i >= 1 && i <= 6)) {
                         // update references in this struct
                         for(char *ptr = linkedit + off + s; ptr < linkedit + off + s + to_copy; ptr += m->size_divider) {
                             uint32_t diff = 0;
-                            for(uint32_t j = moveref[i].target_start; j <= moveref[i].target_end; j++) {
-                                diff += li[0].moveme[j].size;
+                            for(int j = moveref[i].target_start; j <= moveref[i].target_end; j++) {
+                                diff += *li[0].moveme[j].size;
                             }
                             *((uint32_t *) (ptr + moveref[i].offset)) += diff;
                         }
                     }
                     s += to_copy;
                 }
+                printf("i=%d s=%u off=%u\n", i, s, off);
                 // update the one to load
                 struct moveme *m = &li[1].moveme[i];
-                *m->off = linkedit_off + off;
-                *m->size = s / *m->size_divider;
+                *m->off = linkedit_off + off; // hack hack
+                *m->size = s / m->size_divider;
 
                 off += s;
             }
@@ -370,20 +474,31 @@ void b_inject_into_macho_fd(const struct binary *binary, int fd, addr_t (*find_h
             uint32_t symoff = li[1].dysymtab->ilocalsym;
             li[1].symtab->symoff = symoff;
             li[1].symtab->nsyms = (li[1].dysymtab->locreloff - symoff) / sizeof(struct nlist);
-            li[1].dysymtab->ilocalsym -= symoff;
-            li[1].dysymtab->iextdefsym -= symoff;
-            li[1].dysymtab->iundefsym -= symoff;
+            // hack
+            li[1].dysymtab->ilocalsym = (li[1].dysymtab->ilocalsym - symoff) / sizeof(struct nlist);
+            li[1].dysymtab->iextdefsym = (li[1].dysymtab->iextdefsym - symoff) / sizeof(struct nlist);
+            li[1].dysymtab->iundefsym = (li[1].dysymtab->iundefsym - symoff) / sizeof(struct nlist);
 
             // ... and update section references
             for(int i = 0; i < num_reserved1s; i++) {
-                *reserved1s[i] += li[0].moveme[6].size;
+                *reserved1s[i] += *li[0].moveme[6].size;
+            }
+
+            // ... and dyld info
+            if(li->dyld_info) {
+                for(int i = 7; i <= 9; i++) {
+                    printf("%d\n", i);
+                    if(*li[1].moveme[i].off) {
+                        handle_retarded_dyld_info(linkedit - linkedit_off + *li[1].moveme[i].off, *li[0].moveme[i].size, num_segments, i != 9);
+                    }
+                }
             }
 
             struct segment_command *newseg = ADD_COMMAND(sizeof(struct segment_command));
             newseg->cmd = LC_SEGMENT;
-            newseg->cmdsize = sizeof(struct seegment_command);
+            newseg->cmdsize = sizeof(struct segment_command);
             memset(newseg->segname, 0, 16);
-            strcpy(newsg->segname, "__LINKEDIT");
+            strcpy(newseg->segname, "__LINKEDIT");
             newseg->vmaddr = ADD_SEGMENT_ADDR(newsize);
             newseg->vmsize = newsize;
             newseg->fileoff = linkedit_off;
@@ -391,9 +506,12 @@ void b_inject_into_macho_fd(const struct binary *binary, int fd, addr_t (*find_h
             newseg->maxprot = newseg->initprot = PROT_READ | PROT_WRITE;
             newseg->nsects = 0;
             newseg->flags = 0;
+
+            printf("off=%d newsize=%d\n", linkedit_off, newsize);
+            pwrite(fd, linkedit, newsize, linkedit_off);
         }
         
-        if(target_linkedit_base) munmap(target_linkedit_base);
+        if(li[1].linkedit_ptr) munmap(li[1].linkedit_ptr, li[1].linkedit_range.size);
     }
 
     munmap(hdr, 0x1000);

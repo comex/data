@@ -2,6 +2,7 @@
 #include "headers/loader.h"
 #include "headers/nlist.h"
 #include "headers/fat.h"
+#include "read_dyld_info.h"
 
 const int desired_cputype = 12; // ARM
 const int desired_cpusubtype = 0; // v7=9, v6=6
@@ -136,9 +137,9 @@ void b_prange_load_macho_nosyms(struct binary *binary, prange_t pr, size_t offse
     if(hdr->magic == MH_MAGIC) {
         // thin file
         binary->mach->hdr = hdr;
-        if(hdr->cputype != desired_cputype || (hdr->cpusubtype != 0 && desired_cpusubtype != 0 && hdr->cpusubtype != desired_cpusubtype)) {
+        /*if(hdr->cputype != desired_cputype || (hdr->cpusubtype != 0 && desired_cpusubtype != 0 && hdr->cpusubtype != desired_cpusubtype)) {
             die("thin file doesn't have the right architecture");
-        }
+        }*/
     } else if(hdr->magic == FAT_CIGAM) {
         if(offset) die("fat, offset != 0");
 
@@ -232,34 +233,8 @@ static addr_t sym_nlist(const struct binary *binary, const char *name, int optio
     return 0;
 }
 
-// ld64
-static uint32_t read_uleb128(void **ptr, void *end) {
-    uint32_t result = 0;
-    uint8_t *p = *ptr;
-    uint8_t bit;
-    int shift = 0;
-    do {
-        if(p >= (uint8_t *) end) die("uleb128 overrun");
-        bit = *p++;
-        uint32_t k = bit & 0x7f;
-        if(((k << shift) >> shift) != k) die("uleb128 too big");
-        result |= k << shift;
-        shift += 7;
-    } while(bit & 0x80);
-    *ptr = p;
-    return result;
-}
-
-static inline void *read_bytes(void **ptr, void *end, size_t size) {
-    char *p = *ptr;
-    if((size_t) ((char *) end - p) < size) die("too big");
-    *ptr = p + size;
-    return p;
-}
-
-#define read_int(ptr, end, typ) *((typ *) read_bytes(ptr, end, sizeof(typ)))
-
 static addr_t trie_recurse(const struct binary *binary, void *ptr, char *start, char *end, const char *name0, const char *name, int options) {
+    if(start == end) return 0;
     uint8_t terminal_size = read_int(&ptr, end, uint8_t);
     if(terminal_size) {
         uint32_t flags = read_uleb128(&ptr, end);

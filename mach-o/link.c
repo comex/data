@@ -6,14 +6,14 @@
 #include <assert.h>
 #include <ctype.h>
 
-static addr_t lookup_nth_symbol(const struct binary *load, const struct binary *target, lookupsym_t lookup_sym, uint32_t symbolnum) {
+static addr_t lookup_nth_symbol(const struct binary *load, const struct binary *target, lookupsym_t lookup_sym, uint32_t symbolnum, bool userland) {
     struct nlist *nl = b_macho_nth_symbol(load, symbolnum);
     bool weak = nl->n_desc & N_WEAK_REF;
     const char *name = load->mach->strtab + nl->n_un.n_strx;
     addr_t sym = lookup_sym(target, name);
     if(!sym) {
-        if(weak) {
-            fprintf(stderr, "lookup_nth_symbol: couldn't find weak symbol %s\n", name);
+        if(weak || userland) {
+            fprintf(stderr, "lookup_nth_symbol: couldn't find %ssymbol %s\n", weak ? "weak " : "", name);
         } else {
             die("couldn't find symbol %s\n", name);
         }
@@ -33,7 +33,7 @@ static void relocate_area(const struct binary *load, const struct binary *target
         addr_t value;
         if(things[i].r_extern) {
             if(mode == RELOC_LOCAL_ONLY) continue;
-            value = lookup_nth_symbol(load, target, lookup_sym, things[i].r_symbolnum);
+            value = lookup_nth_symbol(load, target, lookup_sym, things[i].r_symbolnum, mode == RELOC_USERLAND);
             if(value == 0 && mode == RELOC_USERLAND) continue;
         } else {
             if(mode == RELOC_EXTERN_ONLY || mode == RELOC_USERLAND) continue;
@@ -163,7 +163,7 @@ void b_relocate(struct binary *load, const struct binary *target, enum reloc_mod
                         default: {
                             if(mode == RELOC_LOCAL_ONLY) continue;
                             //printf("setting indirect symbol %x\n", sect->addr + 4*i);
-                            uint32_t addr = lookup_nth_symbol(load, target, lookup_sym, sym);
+                            uint32_t addr = lookup_nth_symbol(load, target, lookup_sym, sym, mode == RELOC_USERLAND);
                             if(!addr && mode == RELOC_USERLAND) break;
                             things[i] = addr;
                             indirect[i] = INDIRECT_SYMBOL_ABS;
