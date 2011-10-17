@@ -19,12 +19,6 @@ void punmap(prange_t range) {
     munmap(range.start, range.size);
 }
 
-void check_range_has_addr(range_t range, addr_t addr) {
-    if(addr < range.start || addr >= (range.start + range.size)) {
-        die("bad address 0x%08x (not in range %08x-%08x)", addr, range.start, range.start + (uint32_t) range.size);
-    }
-}
-    
 bool is_valid_range(prange_t range) {
     char c;
     return !mincore(range.start, range.size, (void *) &c);
@@ -97,7 +91,7 @@ prange_t load_fd(int fd, bool rw) {
     }
     void *buf = mmap(NULL, (size_t) end, PROT_READ | (rw ? PROT_WRITE : 0), MAP_PRIVATE, fd, 0);
     if(buf == MAP_FAILED) {
-        edie("could not mmap buf (end=%zd)", (size_t) end);
+        edie("could not mmap buf (end=%zu)", (size_t) end);
     }
     return (prange_t) {buf, (size_t) end};
 }

@@ -32,11 +32,10 @@ void b_macho_store(struct binary *binary, const char *path);
 void b_prange_load_macho(struct binary *binary, prange_t range, size_t offset, const char *name);
 void b_prange_load_macho_nosyms(struct binary *binary, prange_t range, size_t offset, const char *name);
 
-uint32_t b_allocate_from_macho_fd(int fd);
-void b_inject_into_macho_fd(const struct binary *binary, int fd, addr_t (*find_hack_func)(const struct binary *binary));
-
 void b_load_macho(struct binary *binary, const char *filename);
 
 struct nlist *b_macho_nth_symbol(const struct binary *binary, uint32_t n);
+
+addr_t b_macho_reloc_base(const struct binary *binary);
 
 __END_DECLS

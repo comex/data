@@ -178,7 +178,6 @@ void b_prange_load_macho_nosyms(struct binary *binary, prange_t pr, size_t offse
 #undef _arg
 }
 
-
 static inline struct data_sym convert_nlist(const struct binary *binary, const struct nlist *nl, int options) {
     struct data_sym result;
     uint32_t strx = (uint32_t) nl->n_un.n_strx;
@@ -413,207 +412,6 @@ void b_macho_store(struct binary *binary, const char *path) {
 #undef _arg
 }
 
-uint32_t b_allocate_from_macho_fd(int fd) {
-    struct mach_header *hdr = mmap(NULL, 0x1000, PROT_READ, MAP_SHARED, fd, 0);
-    if(hdr == MAP_FAILED) edie("could not mmap hdr");
-    if(hdr->sizeofcmds > 0x1000 || hdr->sizeofcmds + sizeof(struct mach_header) > 0x1000) {
-        die("too many commands");
-    }
-
-    uint32_t max = 0;
-    CMD_ITERATE(hdr, cmd) {
-        if(cmd->cmd == LC_SEGMENT) {
-            struct segment_command *seg = (void *) cmd;
-            if(seg->vmaddr >= 0xf0000000 || seg->vmaddr + seg->vmsize < seg->vmaddr) {
-                die("overflow");
-            }
-            uint32_t newmax = seg->vmaddr + seg->vmsize;
-            if(newmax > max) max = newmax;
-        }
-    }
-
-    if(max == 0) {
-        die("no segments");
-    }
-
-    munmap(hdr, 0x1000);
-
-    return (max + 0xfff) & ~0xfffu;
-}
-
-
-void b_inject_into_macho_fd(const struct binary *binary, int fd, addr_t (*find_hack_func)(const struct binary *binary)) {
-    off_t seg_off = lseek(fd, 0, SEEK_END);
-    struct mach_header *hdr = mmap(NULL, 0x1000, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-    if(hdr == MAP_FAILED) edie("could not mmap hdr in read/write mode");
-    if(hdr->sizeofcmds > 0x1000 || hdr->sizeofcmds + sizeof(struct mach_header) > 0x1000) {
-        die("too many commands");
-    }
-
-    struct segment_command *newseg = (void *) ((char *) (hdr + 1) + hdr->sizeofcmds);
-    off_t header_off = (off_t) (sizeof(struct mach_header) + hdr->sizeofcmds);
-
-    uint32_t init_ptrs[100];
-    int num_init_ptrs = 0;
-
-    CMD_ITERATE(binary->mach->hdr, cmd) {
-        if(cmd->cmd == LC_SEGMENT) {
-            struct segment_command *seg = (void *) cmd;
-            size_t size = sizeof(struct segment_command) + seg->nsects * sizeof(struct section);
-            if(size != seg->cmdsize) {
-                die("inconsistent cmdsize");
-            }
-
-            if(header_off + size > 0x1000) {
-                die("not enough space");
-            }
-
-            hdr->ncmds++;
-            hdr->sizeofcmds += (uint32_t) size;
-
-            memcpy(newseg, seg, size);
-
-            seg_off = (seg_off + 0xfff) & ~0xfff;
-
-            newseg->fileoff = (uint32_t) seg_off;
-            printf("setting fileoff to %u\n", (uint32_t) seg_off);
-            prange_t pr = rangeconv_off((range_t) {binary, seg->fileoff, seg->filesize}, MUST_FIND);
-            if((size_t) pwrite(fd, pr.start, pr.size, seg_off) != pr.size) {
-                die("couldn't write additional segment");
-            }
-
-            seg_off += pr.size;
-
-            newseg = (void *) ((char *)newseg + size);
-            header_off += size;
-            
-            struct section *sections = (void *) (seg + 1);
-            for(uint32_t i = 0; i < seg->nsects; i++) {
-                struct section *sect = &sections[i];
-                if((sect->flags & SECTION_TYPE) == S_MOD_INIT_FUNC_POINTERS) {
-                    uint32_t *p = rangeconv_off((range_t) {binary, sect->offset, sect->size}, MUST_FIND).start;
-                    size_t num = sect->size / 4;
-                    while(num--) {
-                        if(num_init_ptrs < 100) init_ptrs[num_init_ptrs++] = *p++;
-                    }
-                }
-                // ZEROFILL is okay because iBoot always zeroes vmsize - filesize
-            }
-        }
-    }
-
-
-    // now deal with the init pointers
-    if(num_init_ptrs > 0) {
-        if(num_init_ptrs == 1) {
-            fprintf(stderr, "note: 1 constructor function is present; using the hack_func\n");
-        } else {
-            fprintf(stderr, "note: %d constructor functions are present; using the hack_func\n", num_init_ptrs);
-        }
-
-        if(!find_hack_func) {
-            die("...but there was no find_hack_func");
-        }
-        
-        // ldr pc, [pc]
-        uint16_t part0[] = {0xf8df, 0xf000};
-
-        // push {r0-r3, lr}; adr lr, f+1; ldr pc, a; f: b next; a: .long 0; next:
-        // (the address of the init func)
-        // 
-        uint16_t part1[] = {0xb50f, 0xf20f, 0x0e07, 0xf8df, 0xf004, 0xe001};
-        // (bytes_to_move bytes of stuff)
-        // pop {r0-r3, lr}
-        static const uint16_t part2[] = {0xe8bd, 0x400f};
-        // ldr pc, [pc]
-        static const uint16_t part3[] = {0xf8df, 0xf000};
-
-        uint32_t bytes_to_move = 12; // don't cut the MRC in two!
-
-        struct binary kern;
-        b_init(&kern);
-        b_prange_load_macho(&kern, load_fd(fd, false), 0, "kern");
-        addr_t hack_func = find_hack_func(&kern);
-        fprintf(stderr, "hack_func = %08x\n", hack_func);
-        prange_t hack_func_pr = rangeconv((range_t) {&kern, hack_func & ~1, bytes_to_move}, MUST_FIND);
-        range_t hack_func_off_range = range_to_off_range((range_t) {&kern, hack_func & ~1, sizeof(part0) + sizeof(uint32_t)}, MUST_FIND);
-
-        // allocate a new segment for the stub
-
-        uint32_t stub_size = (uint32_t) ((sizeof(part1) + 4) * num_init_ptrs + sizeof(part2) + bytes_to_move + sizeof(part3) + 4);
-
-        if(!(hack_func & 1)) {
-            die("hack func 0x%x is not thumb", hack_func);
-        }
-
-
-        size_t size = sizeof(struct segment_command);
-        if(header_off + size > 0x1000) {
-            die("not enough space");
-        }
-
-        seg_off = (seg_off + 0xfff) & ~0xfff;
-        hdr->ncmds++;
-        hdr->sizeofcmds += sizeof(struct segment_command);
-        
-        newseg->cmd = LC_SEGMENT;
-        newseg->cmdsize = sizeof(struct segment_command);
-        memset(newseg->segname, 0, 16);
-        strcpy(newseg->segname, "__CRAP");
-        newseg->vmaddr = b_allocate_from_macho_fd(fd);
-        newseg->vmsize = stub_size;
-        newseg->fileoff = (uint32_t) seg_off;
-        newseg->filesize = stub_size;
-        newseg->maxprot = newseg->initprot = PROT_READ | PROT_EXEC;
-        newseg->nsects = 0;
-        newseg->flags = 0;
-
-        lseek(fd, seg_off, SEEK_SET);
-
-        seg_off += 4 * num_init_ptrs;
-
-        for(int i = 0; i < num_init_ptrs; i++) {
-            if(write(fd, part1, sizeof(part1)) != sizeof(part1) ||
-               write(fd, &init_ptrs[i], 4) != 4) {
-                edie("couldn't write part1");
-            }
-            part1[0] = 0x46c0;
-        }
-        
-        if(write(fd, part2, sizeof(part2)) != sizeof(part2)) {
-            edie("couldn't write part2");
-        }
-
-        if((size_t) write(fd, hack_func_pr.start, bytes_to_move) != bytes_to_move) {
-            edie("couldn't write moved bytes");
-        }
-
-        if(write(fd, part3, sizeof(part3)) != sizeof(part3)) {
-            edie("couldn't write part3");
-        }
-
-        uint32_t new_addr = hack_func + bytes_to_move;
-
-        if(write(fd, &new_addr, sizeof(new_addr)) != sizeof(new_addr)) {
-            edie("couldn't write new_addr");
-        }
-        
-        lseek(fd, hack_func_off_range.start, SEEK_SET);
-
-        if(write(fd, part0, sizeof(part0)) != sizeof(part0)) {
-            edie("couldn't write part0");
-        }
-
-        new_addr = newseg->vmaddr | 1;
-
-        if(write(fd, &new_addr, sizeof(new_addr)) != sizeof(new_addr)) {
-            edie("couldn't write new_addr 2");
-        }
-    }
-
-    munmap(hdr, 0x1000);
-}
-
 range_t b_macho_segrange(const struct binary *binary, const char *segname) {
     CMD_ITERATE(binary->mach->hdr, cmd) {
         if(cmd->cmd == LC_SEGMENT) {
@@ -645,4 +443,17 @@ range_t b_macho_sectrange(const struct binary *binary, const char *segname, cons
 
 void b_load_macho(struct binary *binary, const char *filename) {
     return b_prange_load_macho(binary, load_file(filename, true, NULL), 0, filename);
+}
+
+addr_t b_macho_reloc_base(const struct binary *binary) {
+    // copying dyld's behavior
+    CMD_ITERATE(binary->mach->hdr, cmd) {
+        if(cmd->cmd == LC_SEGMENT) {
+            struct segment_command *seg = (void *) cmd;
+            if(binary->mach->hdr->cputype != 0x01000007 /* CPU_TYPE_X86_64 */ || (seg->initprot & PROT_WRITE)) {
+                return seg->vmaddr;
+            }
+        }
+    }
+    die("no segments");
 }

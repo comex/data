@@ -44,11 +44,10 @@ __unused static const char *const _arg = (char *) MAP_FAILED;
 struct binary;
 typedef uint32_t addr_t;
 typedef struct { const struct binary *binary; addr_t start; size_t size; } range_t;
+typedef struct { addr_t start; size_t size; } arange_t;
 typedef struct { void *start; size_t size; } prange_t;
 
 __BEGIN_DECLS
-
-void check_range_has_addr(range_t range, addr_t addr);
 
 prange_t pdup(prange_t range);
 void pfree(prange_t range);
