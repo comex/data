@@ -50,10 +50,11 @@ static const struct moveref {
 };
 
 
-static bool catch_linkedit(struct mach_header *hdr, struct linkedit_info *li) {
+static bool catch_linkedit(struct mach_header *hdr, struct linkedit_info *li, bool patch) {
     memset(li, 0, sizeof(*li));
     bool ret = false;
     CMD_ITERATE(hdr, cmd) {
+        restart:
         switch(cmd->cmd) {
         case LC_SEGMENT: {
             struct segment_command *seg = (void *) cmd;
@@ -61,7 +62,7 @@ static bool catch_linkedit(struct mach_header *hdr, struct linkedit_info *li) {
                 li->linkedit_range.start = seg->fileoff;
                 li->linkedit_range.size = seg->filesize;
                 ret = true;
-                cmd->cmd = 0x1000;
+                goto patchout;
                 break;
             }
 
@@ -131,15 +132,24 @@ static bool catch_linkedit(struct mach_header *hdr, struct linkedit_info *li) {
             li->moveme[9].size_divider = 1;
             break;
         }
+        patchout:
         case LC_CODE_SIGNATURE:
         case LC_SEGMENT_SPLIT_INFO:
         case 38 /*LC_FUNCTION_STARTS*/:
             // hope you didn't need that stuff <3
-            cmd->cmd = 0x1000;
+            if(patch) {
+                hdr->sizeofcmds -= cmd->cmdsize;
+                hdr->ncmds--;
+                size_t copysize = hdr->sizeofcmds - ((char *) cmd - (char *) (hdr + 1));
+                memcpy(cmd, (char *) cmd + cmd->cmdsize, copysize);
+                if(!copysize) goto end;
+                goto restart;
+            }
             break;
         }
         // xxx - this should be immutable but we are overwriting it
     }
+    end:
     // we want both binaries to have a symtab and dysymtab, makes things easier
     if(!li->symtab || !li->dysymtab) die("symtab/dysymtab missing");
     return ret;
@@ -237,10 +247,10 @@ void b_inject_into_macho_fd(const struct binary *binary, int fd, addr_t (*find_h
     // in userland mode, we cut off the LINKEDIT segment  (for target, only if it's at the end of the binary)
     struct linkedit_info li[2];
     if(userland) {
-        if(catch_linkedit(binary->mach->hdr, &li[0])) {
+        if(catch_linkedit(binary->mach->hdr, &li[0], false)) {
             li[0].linkedit_ptr = rangeconv_off((range_t) {binary, li[0].linkedit_range.start, li[0].linkedit_range.size}, MUST_FIND).start;
         }
-        if(catch_linkedit(hdr, &li[1])) {
+        if(catch_linkedit(hdr, &li[1], true)) {
             li[1].linkedit_ptr = mmap(NULL, li[1].linkedit_range.size, PROT_READ, MAP_PRIVATE, fd, li[1].linkedit_range.start);
             if(li[1].linkedit_ptr == MAP_FAILED) edie("could not map target __LINKEDIT");
             if((off_t) (li[1].linkedit_range.start + li[1].linkedit_range.size) == seg_off) {
@@ -293,10 +303,10 @@ void b_inject_into_macho_fd(const struct binary *binary, int fd, addr_t (*find_h
     CMD_ITERATE(binary->mach->hdr, cmd) {
         if(cmd->cmd == LC_SEGMENT) {
             struct segment_command *seg = (void *) cmd;
+
+            if(userland && !strcmp(seg->segname, "__LINKEDIT")) continue;
+
             size_t size = sizeof(struct segment_command) + seg->nsects * sizeof(struct section);
-            if(size != seg->cmdsize) {
-                die("inconsistent cmdsize");
-            }
 
             // make seg_addr useful
             addr_t new_addr = seg->vmaddr + seg->vmsize;
@@ -512,6 +522,7 @@ void b_inject_into_macho_fd(const struct binary *binary, int fd, addr_t (*find_h
         }
         
         if(li[1].linkedit_ptr) munmap(li[1].linkedit_ptr, li[1].linkedit_range.size);
+
     }
 
     munmap(hdr, 0x1000);
