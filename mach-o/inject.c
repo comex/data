@@ -5,6 +5,18 @@
 #include "headers/reloc.h"
 #include <stddef.h>
 
+// cctool's checkout.c insists on this exact order
+enum {
+    MM_BIND, MM_WEAK_BIND, MM_LAZY_BIND,
+    MM_LOCREL,
+    MM_SYMTAB,
+    MM_LOCALSYM, MM_EXTDEFSYM, MM_UNDEFSYM,
+    MM_EXTREL,
+    MM_INDIRECT,
+    MM_STRTAB,
+    NMOVEME
+};
+
 struct linkedit_info {
     arange_t linkedit_range;
     void *linkedit_ptr;
@@ -21,12 +33,15 @@ struct linkedit_info {
     // - relocations reference symbols
     // - indirect syms reference symbols
     // - (section data references indirect syms)
-#define NMOVEME 10
     struct moveme {
         uint32_t *off, *size;
-        uint32_t off_base;
-        uint32_t size_divider;
-        //uint32_t orig_size;
+        uint32_t element_size;
+        
+        int off_base;
+
+        void *copied_to;
+        void *copied_from;
+        uint32_t copied_size;
     } moveme[NMOVEME];
 
     struct symtab_command *symtab;
@@ -38,15 +53,15 @@ static const struct moveref {
     int target_start, target_end;
     ptrdiff_t offset;
 } moveref[NMOVEME] = {
-    /* 0 */   {-1, -1, 0},
-    /* 1-3 */ {0, 0, offsetof(struct nlist, n_un.n_strx)},
-              {0, 0, offsetof(struct nlist, n_un.n_strx)},
-              {0, 0, offsetof(struct nlist, n_un.n_strx)},
+    [MM_LOCALSYM]  = {MM_STRTAB, MM_STRTAB, offsetof(struct nlist, n_un.n_strx)},
+    [MM_EXTDEFSYM] = {MM_STRTAB, MM_STRTAB, offsetof(struct nlist, n_un.n_strx)},
+    [MM_UNDEFSYM]  = {MM_STRTAB, MM_STRTAB, offsetof(struct nlist, n_un.n_strx)},
+
               // hooray for little endian
-    /* 4-5 */ {1, 3, 4},
-              {1, 3, 4},
+    [MM_LOCREL]    = {MM_LOCALSYM, MM_UNDEFSYM, 4},
+    [MM_EXTREL]    = {MM_LOCALSYM, MM_UNDEFSYM, 4},
               // the whole thing is a symbol number
-    /* 6 */   {1, 3, 0}
+    [MM_INDIRECT]  = {MM_LOCALSYM, MM_UNDEFSYM, 0}
 };
 
 
@@ -72,9 +87,14 @@ static bool catch_linkedit(struct mach_header *hdr, struct linkedit_info *li, bo
             struct symtab_command *symtab = (void *) cmd;
             li->symtab = symtab;
 
-            li->moveme[0].off = &symtab->stroff;
-            li->moveme[0].size = &symtab->strsize;
-            li->moveme[0].size_divider = 1;
+            li->moveme[MM_STRTAB].off = &symtab->stroff;
+            li->moveme[MM_STRTAB].size = &symtab->strsize;
+            li->moveme[MM_STRTAB].element_size = 1;
+            
+            li->moveme[MM_SYMTAB].off = &symtab->symoff;
+            li->moveme[MM_SYMTAB].size = &symtab->nsyms;
+            li->moveme[MM_SYMTAB].element_size = sizeof(struct nlist);
+            li->moveme[MM_SYMTAB].off_base = -1;
 
             break;
         }
@@ -82,32 +102,32 @@ static bool catch_linkedit(struct mach_header *hdr, struct linkedit_info *li, bo
             struct dysymtab_command *dys = (void *) cmd;
             li->dysymtab = dys;
 
-            li->moveme[1].off = &dys->ilocalsym;
-            li->moveme[1].size = &dys->nlocalsym;
-            li->moveme[1].off_base = li->symtab->symoff;
-            li->moveme[1].size_divider = sizeof(struct nlist);
+            li->moveme[MM_LOCALSYM].off = &dys->ilocalsym;
+            li->moveme[MM_LOCALSYM].size = &dys->nlocalsym;
+            li->moveme[MM_LOCALSYM].element_size = sizeof(struct nlist);
+            li->moveme[MM_LOCALSYM].off_base = MM_SYMTAB;
 
-            li->moveme[2].off = &dys->iextdefsym;
-            li->moveme[2].size = &dys->nextdefsym;
-            li->moveme[2].off_base = li->symtab->symoff;
-            li->moveme[2].size_divider = sizeof(struct nlist);
+            li->moveme[MM_EXTDEFSYM].off = &dys->iextdefsym;
+            li->moveme[MM_EXTDEFSYM].size = &dys->nextdefsym;
+            li->moveme[MM_EXTDEFSYM].element_size = sizeof(struct nlist);
+            li->moveme[MM_EXTDEFSYM].off_base = MM_SYMTAB;
 
-            li->moveme[3].off = &dys->iundefsym;
-            li->moveme[3].size = &dys->nundefsym;
-            li->moveme[3].off_base = li->symtab->symoff;
-            li->moveme[3].size_divider = sizeof(struct nlist);
+            li->moveme[MM_UNDEFSYM].off = &dys->iundefsym;
+            li->moveme[MM_UNDEFSYM].size = &dys->nundefsym;
+            li->moveme[MM_UNDEFSYM].element_size = sizeof(struct nlist);
+            li->moveme[MM_UNDEFSYM].off_base = MM_SYMTAB;
 
-            li->moveme[4].off = &dys->locreloff;
-            li->moveme[4].size = &dys->nlocrel;
-            li->moveme[4].size_divider = sizeof(struct relocation_info);
+            li->moveme[MM_LOCREL].off = &dys->locreloff;
+            li->moveme[MM_LOCREL].size = &dys->nlocrel;
+            li->moveme[MM_LOCREL].element_size = sizeof(struct relocation_info);
 
-            li->moveme[5].off = &dys->extreloff;
-            li->moveme[5].size = &dys->nextrel;
-            li->moveme[5].size_divider = sizeof(struct relocation_info);
+            li->moveme[MM_EXTREL].off = &dys->extreloff;
+            li->moveme[MM_EXTREL].size = &dys->nextrel;
+            li->moveme[MM_EXTREL].element_size = sizeof(struct relocation_info);
 
-            li->moveme[6].off = &dys->indirectsymoff;
-            li->moveme[6].size = &dys->nindirectsyms;
-            li->moveme[6].size_divider = 4;
+            li->moveme[MM_INDIRECT].off = &dys->indirectsymoff;
+            li->moveme[MM_INDIRECT].size = &dys->nindirectsyms;
+            li->moveme[MM_INDIRECT].element_size = 4;
 
             break;
         }
@@ -116,20 +136,24 @@ static bool catch_linkedit(struct mach_header *hdr, struct linkedit_info *li, bo
             struct dyld_info_command *di = (void *) cmd;
             li->dyld_info = di;
 
-            di->rebase_off = 0;
-            di->rebase_size = 0;
+            if(patch) {
+                di->rebase_off = 0;
+                di->rebase_size = 0;
+                di->export_off = 0;
+                di->export_size = 0;
+            }
 
-            li->moveme[7].off = &di->bind_off;
-            li->moveme[7].size = &di->bind_size;
-            li->moveme[7].size_divider = 1;
+            li->moveme[MM_BIND].off = &di->bind_off;
+            li->moveme[MM_BIND].size = &di->bind_size;
+            li->moveme[MM_BIND].element_size = 1;
 
-            li->moveme[8].off = &di->weak_bind_off;
-            li->moveme[8].size = &di->weak_bind_size;
-            li->moveme[8].size_divider = 1;
+            li->moveme[MM_WEAK_BIND].off = &di->weak_bind_off;
+            li->moveme[MM_WEAK_BIND].size = &di->weak_bind_size;
+            li->moveme[MM_WEAK_BIND].element_size = 1;
 
-            li->moveme[9].off = &di->lazy_bind_off;
-            li->moveme[9].size = &di->lazy_bind_size;
-            li->moveme[9].size_divider = 1;
+            li->moveme[MM_LAZY_BIND].off = &di->lazy_bind_off;
+            li->moveme[MM_LAZY_BIND].size = &di->lazy_bind_size;
+            li->moveme[MM_LAZY_BIND].element_size = 1;
             break;
         }
         patchout:
@@ -292,7 +316,7 @@ void b_inject_into_macho_fd(const struct binary *binary, int fd, addr_t (*find_h
                     if(li[0].dyld_info && !strcmp(sect->sectname, "__stub_helper")) {
                         void *segdata = mmap(NULL, seg->filesize, PROT_READ | PROT_WRITE, MAP_SHARED, fd, seg->fileoff);
                         if(segdata == MAP_FAILED) edie("could not map stub_helper");
-                        fixup_stub_helpers(segdata + sect->offset - seg->fileoff, sect->size, *li[0].moveme[9].size);
+                        fixup_stub_helpers(segdata + sect->offset - seg->fileoff, sect->size, *li[0].moveme[MM_LAZY_BIND].size);
                         munmap(segdata, seg->filesize);
                     }
                 }
@@ -443,7 +467,9 @@ void b_inject_into_macho_fd(const struct binary *binary, int fd, addr_t (*find_h
         uint32_t newsize = 0;
         for(int i = 0; i < NMOVEME; i++) {
             for(int l = 0; l < 2; l++) {
-                newsize += *li[l].moveme[i].size * li[l].moveme[i].size_divider;
+                if(li[l].moveme[i].off_base != -1) {
+                    newsize += *li[l].moveme[i].size * li[l].moveme[i].element_size;
+                }
             }
         }
 
@@ -456,50 +482,55 @@ void b_inject_into_macho_fd(const struct binary *binary, int fd, addr_t (*find_h
                 uint32_t s = 0;
                 for(int l = 0; l < 2; l++) {
                     struct moveme *m = &li[l].moveme[i];
-                    //m->orig_size = *m->size;
-                    uint32_t to_copy = *m->size * m->size_divider;
-                    memcpy(linkedit + off + s, li[l].linkedit_ptr - li[l].linkedit_range.start + *m->off * (m->off_base ? m->size_divider : 1) + m->off_base, to_copy);
-                    if(l == 1 && (i >= 1 && i <= 6)) {
-                        // update references in this struct
-                        for(char *ptr = linkedit + off + s; ptr < linkedit + off + s + to_copy; ptr += m->size_divider) {
-                            uint32_t diff = 0;
-                            for(int j = moveref[i].target_start; j <= moveref[i].target_end; j++) {
-                                diff += *li[0].moveme[j].size;
-                            }
-                            *((uint32_t *) (ptr + moveref[i].offset)) += diff;
-                        }
+                    m->copied_size = *m->size * m->element_size;
+                    m->copied_to = linkedit + off + s;
+                    if(m->off_base > 0) {
+                        // the value is an index into a table represented by another moveme (i.e. the symtab)
+                        m->copied_from = li[l].moveme[m->off_base].copied_from + *m->off * m->element_size;
+                    } else {
+                        // the value is a file offset
+                        m->copied_from = li[l].linkedit_ptr - li[l].linkedit_range.start + *m->off;
                     }
-                    s += to_copy;
+                    if(m->off_base != -1) memcpy(m->copied_to, m->copied_from, m->copied_size);
+                    s += m->copied_size;
                 }
                 printf("i=%d s=%u off=%u\n", i, s, off);
                 // update the one to load
                 struct moveme *m = &li[1].moveme[i];
-                *m->off = linkedit_off + off; // hack hack
-                *m->size = s / m->size_divider;
+                *m->off = linkedit_off + off;
+                if(m->off_base > 0) {
+                    *m->off = (*m->off - *li[1].moveme[m->off_base].off) / m->element_size;
+                }
+                *m->size = s / m->element_size;
 
-                off += s;
+                if(m->off_base != -1) off += s;
             }
 
-            // that's nice, but now we need to fix the symtab commands...
-            uint32_t symoff = li[1].dysymtab->ilocalsym;
-            li[1].symtab->symoff = symoff;
-            li[1].symtab->nsyms = (li[1].dysymtab->locreloff - symoff) / sizeof(struct nlist);
-            // hack
-            li[1].dysymtab->ilocalsym = (li[1].dysymtab->ilocalsym - symoff) / sizeof(struct nlist);
-            li[1].dysymtab->iextdefsym = (li[1].dysymtab->iextdefsym - symoff) / sizeof(struct nlist);
-            li[1].dysymtab->iundefsym = (li[1].dysymtab->iundefsym - symoff) / sizeof(struct nlist);
+            // update struct references (which are out of order, yay)
+            off = 0;
+            for(int i = MM_LOCREL; i <= MM_INDIRECT; i++) {
+                if(moveref[i].target_start) {
+                    struct moveme *restrict m = &li[1].moveme[i];
+                    for(void *ptr = m->copied_to; ptr < m->copied_to + m->copied_size; ptr += m->element_size) {
+                        uint32_t diff = 0;
+                        for(int j = moveref[i].target_start; j <= moveref[i].target_end; j++) {
+                            diff += *li[0].moveme[j].size;
+                        }
+                        *((uint32_t *) (ptr + moveref[i].offset)) += diff;
+                    }
+                }
+            }
 
             // ... and update section references
             for(int i = 0; i < num_reserved1s; i++) {
-                *reserved1s[i] += *li[0].moveme[6].size;
+                *reserved1s[i] += *li[0].moveme[MM_INDIRECT].size;
             }
 
             // ... and dyld info
             if(li->dyld_info) {
-                for(int i = 7; i <= 9; i++) {
-                    printf("%d\n", i);
+                for(int i = MM_BIND; i <= MM_LAZY_BIND; i++) {
                     if(*li[1].moveme[i].off) {
-                        handle_retarded_dyld_info(linkedit - linkedit_off + *li[1].moveme[i].off, *li[0].moveme[i].size, num_segments, i != 9);
+                        handle_retarded_dyld_info(linkedit - linkedit_off + *li[1].moveme[i].off, *li[0].moveme[i].size, num_segments, i != MM_LAZY_BIND);
                     }
                 }
             }
@@ -510,7 +541,7 @@ void b_inject_into_macho_fd(const struct binary *binary, int fd, addr_t (*find_h
             memset(newseg->segname, 0, 16);
             strcpy(newseg->segname, "__LINKEDIT");
             newseg->vmaddr = ADD_SEGMENT_ADDR(newsize);
-            newseg->vmsize = newsize;
+            newseg->vmsize = (newsize + 0xfff) & ~0xfff;
             newseg->fileoff = linkedit_off;
             newseg->filesize = newsize;
             newseg->maxprot = newseg->initprot = PROT_READ | PROT_WRITE;
