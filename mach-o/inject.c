@@ -179,7 +179,7 @@ static bool catch_linkedit(struct mach_header *hdr, struct linkedit_info *li, bo
     return ret;
 }
 
-static void handle_retarded_dyld_info(void *ptr, uint32_t size, int num_segments, bool kill_dones) {
+static void handle_retarded_dyld_info(void *ptr, uint32_t size, int num_segments, int num_dylibs, bool kill_dones) {
     // seriously, take a look at dyldinfo.cpp from ld64, especially, in this case, the separate handing of different LC_DYLD_INFO sections and the different meaning of BIND_OPCODE_DONE in lazy bind vs the other binds
     // not to mention the impossibility of reading this data without knowing every single opcode
     // and the lack of nop
@@ -204,6 +204,21 @@ static void handle_retarded_dyld_info(void *ptr, uint32_t size, int num_segments
             read_uleb128(&ptr, end);
             break;
         }
+        case BIND_OPCODE_SET_DYLIB_ORDINAL_IMM:
+            if(immediate + num_dylibs > BIND_IMMEDIATE_MASK) {
+                die("too many dylibs (imm)");
+            }
+            *((uint8_t *) ptr - 1) = opcode | (immediate + num_dylibs);
+            break;
+        case BIND_OPCODE_SET_DYLIB_ORDINAL_ULEB: {
+            uint8_t ordinal = read_int(&ptr, end, uint8_t);
+            if(ordinal + num_dylibs > 0x7f) {
+                die("too many dylibs (uleb)");
+            }
+            *((uint8_t *) ptr - 1) = ordinal + num_dylibs;
+            break;
+        }
+
         // things we have to get through
         case BIND_OPCODE_SET_SYMBOL_TRAILING_FLAGS_IMM:
             do {
@@ -294,11 +309,13 @@ void b_inject_into_macho_fd(const struct binary *binary, int fd, addr_t (*find_h
     uint32_t *reserved1s[100];
     int num_reserved1s = 0;
 
-    int num_segments;
+    int num_segments, num_dylibs;
     if(userland) {
         num_segments = 0;
+        num_dylibs = 0;
         CMD_ITERATE(hdr, cmd) {
-            if(cmd->cmd == LC_SEGMENT) {
+            switch(cmd->cmd) {
+            case LC_SEGMENT: {
                 num_segments++;
                 struct segment_command *seg = (void *) cmd;
                 struct section *sections = (void *) (seg + 1);
@@ -320,12 +337,18 @@ void b_inject_into_macho_fd(const struct binary *binary, int fd, addr_t (*find_h
                         munmap(segdata, seg->filesize);
                     }
                 }
+                break;
+            }
+            case LC_LOAD_DYLIB:
+                num_dylibs++;
+                break;
             }
         }
     }
 
     CMD_ITERATE(binary->mach->hdr, cmd) {
-        if(cmd->cmd == LC_SEGMENT) {
+        switch(cmd->cmd) {
+        case LC_SEGMENT: {
             struct segment_command *seg = (void *) cmd;
 
             if(userland && !strcmp(seg->segname, "__LINKEDIT")) continue;
@@ -361,6 +384,15 @@ void b_inject_into_macho_fd(const struct binary *binary, int fd, addr_t (*find_h
                     }
                 }
             }
+            break;
+        }
+        case LC_LOAD_DYLIB:
+            if(userland) {
+                void *newcmd = ADD_COMMAND(cmd->cmdsize);
+                memcpy(newcmd, cmd, cmd->cmdsize);
+                
+            }
+            break;
         }
     }
 
@@ -520,6 +552,20 @@ void b_inject_into_macho_fd(const struct binary *binary, int fd, addr_t (*find_h
                     }
                 }
             }
+            
+            // update library numbers in symbol table
+            {
+                struct moveme *restrict m = &li[0].moveme[MM_UNDEFSYM];
+                for(struct nlist *nl = m->copied_to; (void *) (nl + 1) <= (m->copied_to + m->copied_size); nl++) {
+                    uint16_t lib = GET_LIBRARY_ORDINAL(nl->n_desc);
+                    if(lib != SELF_LIBRARY_ORDINAL && lib <= MAX_LIBRARY_ORDINAL) {
+                        if(lib + num_dylibs > MAX_LIBRARY_ORDINAL) {
+                            die("too many libraries5");
+                        }
+                        SET_LIBRARY_ORDINAL(nl->n_desc, lib + num_dylibs);
+                    }
+                }
+            }
 
             // ... and update section references
             for(int i = 0; i < num_reserved1s; i++) {
@@ -530,7 +576,7 @@ void b_inject_into_macho_fd(const struct binary *binary, int fd, addr_t (*find_h
             if(li->dyld_info) {
                 for(int i = MM_BIND; i <= MM_LAZY_BIND; i++) {
                     if(*li[1].moveme[i].off) {
-                        handle_retarded_dyld_info(linkedit - linkedit_off + *li[1].moveme[i].off, *li[0].moveme[i].size, num_segments, i != MM_LAZY_BIND);
+                        handle_retarded_dyld_info(linkedit - linkedit_off + *li[1].moveme[i].off, *li[0].moveme[i].size, num_segments, num_dylibs, i != MM_LAZY_BIND);
                     }
                 }
             }
