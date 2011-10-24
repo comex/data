@@ -23,7 +23,7 @@ GCC_armv6 = $(SDK_GCC) -arch armv6
 GCC_armv7 = $(SDK_GCC) -arch armv7
 GCC_arm_universal = $(SDK_GCC) -arch armv6 -arch armv7
 
-GXX_native = g++-mp-4.6
+GXX_native = clang++
 GXX_mp = g++-mp-4.6
 
 # C++

@@ -93,10 +93,11 @@ static void do_symbols(struct binary *binary) {
             binary->mach->dysymtab = (void *) cmd;
         } else if(cmd->cmd == LC_DYLD_INFO_ONLY || cmd->cmd == LC_DYLD_INFO) {
             struct dyld_info_command *dcmd = (void *) cmd;
+            binary->mach->dyld_info = dcmd;
             binary->mach->export_trie = rangeconv_off((range_t) {binary, dcmd->export_off, dcmd->export_size}, MUST_FIND);
         }
     }
-    struct dysymtab_command *dc;
+    const struct dysymtab_command *dc;
     if(binary->mach->symtab && (dc = binary->mach->dysymtab)) {
 #define do_it(isym, nsym, x_symtab, x_nsyms) \
         if(dc->isym <= binary->mach->nsyms && dc->nsym <= binary->mach->nsyms - dc->isym && dc->nsym <= MAX_ARRAY(struct nlist) && dc->nsym <= MAX_ARRAY(struct data_sym)) { \
@@ -124,6 +125,7 @@ void b_prange_load_macho(struct binary *binary, prange_t pr, size_t offset, cons
 void b_prange_load_macho_nosyms(struct binary *binary, prange_t pr, size_t offset, const char *name) {
 #define _arg name
     binary->valid = true;
+    binary->pointer_size = 4;
     binary->mach = calloc(sizeof(*binary->mach), 1);
 
     binary->valid_range = pr;
@@ -279,9 +281,7 @@ static addr_t trie_recurse(const struct binary *binary, void *ptr, char *start, 
             }
         }
         // skip the rest
-        do {
-            c = read_int(&ptr, end, char);
-        } while(c);
+        read_cstring(&ptr, end);
         read_uleb128(&ptr, end);
     }
     return 0;

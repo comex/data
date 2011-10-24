@@ -14,13 +14,13 @@ struct mach_binary {
     uint32_t ext_nsyms, imp_nsyms;
 
     // alternatively
+    const struct dyld_info_command *dyld_info;
     prange_t export_trie;
     addr_t export_baseaddr;
 
     char *strtab;
     uint32_t strsize;
-    struct dysymtab_command *dysymtab;
-
+    const struct dysymtab_command *dysymtab;
 };
 
 __BEGIN_DECLS
@@ -38,4 +38,7 @@ struct nlist *b_macho_nth_symbol(const struct binary *binary, uint32_t n);
 
 addr_t b_macho_reloc_base(const struct binary *binary);
 
+#define b_pointer_size(binary) (sizeof(addr_t) == 4 ? (uint8_t) 4 : (binary)->pointer_size)
+
 __END_DECLS
+

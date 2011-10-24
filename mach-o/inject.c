@@ -188,7 +188,6 @@ static void handle_retarded_dyld_info(void *ptr, uint32_t size, int num_segments
         uint8_t byte = read_int(&ptr, end, uint8_t);
         uint8_t immediate = byte & BIND_IMMEDIATE_MASK;
         uint8_t opcode = byte & BIND_OPCODE_MASK;
-        char c;
         switch(opcode){
         // things we actually care about:
         case BIND_OPCODE_DONE:
@@ -199,7 +198,7 @@ static void handle_retarded_dyld_info(void *ptr, uint32_t size, int num_segments
         case BIND_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB: {
             // update the segment number
             uint8_t *p = ptr - 1;
-            printf("incr'ing %u by %u\n", (unsigned int) immediate, (unsigned int) num_segments);
+            //printf("incr'ing %u by %u\n", (unsigned int) immediate, (unsigned int) num_segments);
             *p = (*p & BIND_OPCODE_MASK) | (immediate + num_segments);
             read_uleb128(&ptr, end);
             break;
@@ -221,9 +220,8 @@ static void handle_retarded_dyld_info(void *ptr, uint32_t size, int num_segments
 
         // things we have to get through
         case BIND_OPCODE_SET_SYMBOL_TRAILING_FLAGS_IMM:
-            do {
-                c = read_int(&ptr, end, char);
-            } while(c);
+            ptr += strnlen(ptr, end - ptr);
+            if(ptr == end) 
             break;
         case BIND_OPCODE_SET_ADDEND_SLEB: // actually sleb (and I like how read_uleb128 and read_sleb128 in dyldinfo.cpp are completely separate functions), but read_uleb128 should work
         case BIND_OPCODE_ADD_ADDR_ULEB:
@@ -364,7 +362,7 @@ void b_inject_into_macho_fd(const struct binary *binary, int fd, addr_t (*find_h
             prange_t pr = rangeconv_off((range_t) {binary, seg->fileoff, seg->filesize}, MUST_FIND);
 
             newseg->fileoff = (uint32_t) ADD_SEGMENT(pr.size);
-            printf("setting fileoff to %u\n", newseg->fileoff);
+            //printf("setting fileoff to %u\n", newseg->fileoff);
             if((size_t) pwrite(fd, pr.start, pr.size, newseg->fileoff) != pr.size) {
                 die("couldn't write additional segment");
             }
@@ -526,7 +524,7 @@ void b_inject_into_macho_fd(const struct binary *binary, int fd, addr_t (*find_h
                     if(m->off_base != -1) memcpy(m->copied_to, m->copied_from, m->copied_size);
                     s += m->copied_size;
                 }
-                printf("i=%d s=%u off=%u\n", i, s, off);
+                //printf("i=%d s=%u off=%u\n", i, s, off);
                 // update the one to load
                 struct moveme *m = &li[1].moveme[i];
                 *m->off = linkedit_off + off;
@@ -548,7 +546,8 @@ void b_inject_into_macho_fd(const struct binary *binary, int fd, addr_t (*find_h
                         for(int j = moveref[i].target_start; j <= moveref[i].target_end; j++) {
                             diff += *li[0].moveme[j].size;
                         }
-                        *((uint32_t *) (ptr + moveref[i].offset)) += diff;
+                        uint32_t *p = ptr + moveref[i].offset;
+                        if(*p < 0x10000000) *p += diff;
                     }
                 }
             }
@@ -594,7 +593,7 @@ void b_inject_into_macho_fd(const struct binary *binary, int fd, addr_t (*find_h
             newseg->nsects = 0;
             newseg->flags = 0;
 
-            printf("off=%d newsize=%d\n", linkedit_off, newsize);
+            //printf("off=%d newsize=%d\n", linkedit_off, newsize);
             pwrite(fd, linkedit, newsize, linkedit_off);
         }
         

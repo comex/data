@@ -17,6 +17,7 @@ void b_prange_load_dyldcache(struct binary *binary, prange_t pr, const char *nam
 #define _arg name
 
     binary->valid = true;
+    binary->pointer_size = 4;
     binary->dyld = calloc(1, sizeof(*binary->dyld));
     binary->valid_range = pr;
 
