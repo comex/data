@@ -10,7 +10,10 @@ static addr_t read_xleb128(void **ptr, void *end, bool is_signed) {
         if(p >= (uint8_t *) end) die("uleb128 overrun");
         bit = *p++;
         addr_t k = bit & 0x7f;
-        if(((k << shift) >> shift) != k) die("uleb128 too big");
+        // 0x0051 BIND_OPCODE_ADD_ADDR_ULEB(0xFFFFFFF8)
+        // the argument is a lie, it's actually 64 bits of fff, which overflows here
+        // it should just be sleb, but ...
+        //if(shift >= 8*sizeof(addr_t) || ((k << shift) >> shift) != k) die("uleb128 too big");
         result |= k << shift;
         shift += 7;
     } while(bit & 0x80);

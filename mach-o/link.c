@@ -209,7 +209,6 @@ static void do_bind_section(struct binary *load, const struct binary *target, bo
         case BIND_OPCODE_ADD_ADDR_ULEB:
             offset += read_uleb128(&ptr, end);
             break;
-
         case BIND_OPCODE_DO_BIND:
             count = 1;
             skip = pointer_size;
