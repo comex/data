@@ -3,6 +3,7 @@
 #include "headers/loader.h"
 #include "headers/nlist.h"
 #include "headers/reloc.h"
+#include "headers/machine.h"
 #include <stddef.h>
 
 // cctool's checkout.c insists on this exact order
@@ -237,12 +238,32 @@ static void handle_retarded_dyld_info(void *ptr, uint32_t size, int num_segments
     }
 }
 
-// this is only meaningful on i386
-static void fixup_stub_helpers(void *base, size_t size, uint32_t incr) {
-    while(size >= 0xa + 0xa) {
-        *((uint32_t *) (base + 1)) += incr; 
-        base += 0xa;
-        size -= 0xa;
+static void fixup_stub_helpers(int cputype, void *base, size_t size, uint32_t incr) {
+    if(!size) return;
+    size_t skip_begin, skip_end, offset, stride;
+    switch(cputype) {
+    case CPU_TYPE_ARM:
+        skip_begin = 0x24;
+        skip_end = 0;
+        offset = 8;
+        stride = 0xc;
+        break;
+    case CPU_TYPE_X86:
+        skip_begin = 0;
+        skip_end = 0xa;
+        offset = 1;
+        stride = 0xa;
+        break;
+    default:
+        die("stub_helpers, but unknown cpu type");
+    }
+    if(size < (skip_begin + skip_end)) {
+        die("unknown stub_helpers format (too small)");
+    }
+    base += skip_begin; size -= skip_begin;
+    while(size >= skip_end + stride) {   
+        *((uint32_t *) (base + offset)) += incr;
+        base += stride; size -= stride;
     }
 }
 
@@ -331,7 +352,7 @@ void b_inject_into_macho_fd(const struct binary *binary, int fd, addr_t (*find_h
                     if(li[0].dyld_info && !strcmp(sect->sectname, "__stub_helper")) {
                         void *segdata = mmap(NULL, seg->filesize, PROT_READ | PROT_WRITE, MAP_SHARED, fd, seg->fileoff);
                         if(segdata == MAP_FAILED) edie("could not map stub_helper");
-                        fixup_stub_helpers(segdata + sect->offset - seg->fileoff, sect->size, *li[0].moveme[MM_LAZY_BIND].size);
+                        fixup_stub_helpers(hdr->cputype, segdata + sect->offset - seg->fileoff, sect->size, *li[0].moveme[MM_LAZY_BIND].size);
                         munmap(segdata, seg->filesize);
                     }
                 }

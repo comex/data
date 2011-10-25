@@ -2,10 +2,11 @@
 #include "headers/loader.h"
 #include "headers/nlist.h"
 #include "headers/fat.h"
+#include "headers/machine.h"
 #include "read_dyld_info.h"
 
-const int desired_cputype = 12; // ARM
-const int desired_cpusubtype = 0; // v7=9, v6=6
+const int desired_cputype = CPU_TYPE_ARM;
+const int desired_cpusubtype = 0;
 
 static addr_t sym(const struct binary *binary, const char *name, int options);
 static void copy_syms(const struct binary *binary, struct data_sym **syms, uint32_t *nsyms, int options);
@@ -425,7 +426,7 @@ addr_t b_macho_reloc_base(const struct binary *binary) {
     CMD_ITERATE(binary->mach->hdr, cmd) {
         if(cmd->cmd == LC_SEGMENT) {
             struct segment_command *seg = (void *) cmd;
-            if(binary->mach->hdr->cputype != 0x01000007 /* CPU_TYPE_X86_64 */ || (seg->initprot & PROT_WRITE)) {
+            if(binary->mach->hdr->cputype != CPU_TYPE_X86_64 || (seg->initprot & PROT_WRITE)) {
                 return seg->vmaddr;
             }
         }
