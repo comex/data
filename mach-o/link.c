@@ -95,7 +95,7 @@ static void relocate_with_symtab(struct binary *load, const struct binary *targe
         relocate_area(load, target, mode, lookup_sym, slide, load->mach->dysymtab->extreloff, load->mach->dysymtab->nextrel);
     }
 
-    CMD_ITERATE(load->mach->hdr, cmd) {
+    CMD_ITERATE(b_mach_hdr(load), cmd) {
         if(cmd->cmd == LC_SEGMENT) {
             struct segment_command *seg = (void *) cmd;
             //printf("%.16s %08x\n", seg->segname, seg->vmaddr);

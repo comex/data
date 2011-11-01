@@ -5,25 +5,26 @@
 
 static inline bool prange_check(const struct binary *binary, prange_t range);
 
-
 void b_init(struct binary *binary) {
     memset(binary, 0, sizeof(*binary));
 }
 
 static inline bool rangeconv_stuff(const struct binary *binary, addr_t addr, bool is_off, addr_t *out_address, addr_t *out_offset, size_t *out_size) {
     uint32_t ls = binary->last_seg, ns = binary->nsegments, i = ls;
-    do {
-        const struct data_segment *seg = &binary->segments[i];
-        addr_t diff = addr - (is_off ? seg->file_range : seg->vm_range).start;
-        if(diff < seg->file_range.size) {
-            ((struct binary *) binary)->last_seg = i;
-            *out_address = seg->vm_range.start + diff;
-            *out_offset = seg->file_range.start + diff;
-            *out_size = seg->file_range.size - diff;
-            return true;
+    #define STUFF \
+        const struct data_segment *seg = &binary->segments[i]; \
+        addr_t diff = addr - (is_off ? seg->file_range : seg->vm_range).start; \
+        if(diff < seg->file_range.size) { \
+            ((struct binary *) binary)->last_seg = i; \
+            *out_address = seg->vm_range.start + diff; \
+            *out_offset = seg->file_range.start + diff; \
+            *out_size = seg->file_range.size - diff; \
+            return true; \
         }
-        i = (i + 1) % ns;
-    } while(i != ls);
+    STUFF
+    for(i = 0; i < ns; i++) {
+        STUFF
+    }
     return false;
 }
 
@@ -103,3 +104,8 @@ void b_copy_syms(const struct binary *binary, struct data_sym **syms, uint32_t *
     }
     binary->_copy_syms(binary, syms, nsyms, options);
 }
+
+void b_store(struct binary *binary, const char *path) {
+    store_file(binary->valid_range, path, 0755);
+}
+

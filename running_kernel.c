@@ -48,8 +48,8 @@ mach_port_t get_kernel_task() {
 
 uint32_t b_allocate_from_running_kernel(const struct binary *binary) {
     mach_port_t kernel_task = get_kernel_task();
-    if(binary->mach->hdr->flags & MH_PREBOUND) {
-        CMD_ITERATE(binary->mach->hdr, cmd) {
+    if(b_mach_hdr(binary)->flags & MH_PREBOUND) {
+        CMD_ITERATE(b_mach_hdr(binary), cmd) {
             if(cmd->cmd == LC_SEGMENT) {
                 struct segment_command *seg = (void *) cmd;
                 if(seg->vmsize == 0) continue;
@@ -73,7 +73,7 @@ uint32_t b_allocate_from_running_kernel(const struct binary *binary) {
         // try to reserve some space
         uint32_t slide;
         for(slide = 0xf0000000; slide < 0xf0000000 + 0x01000000; slide += 0x10000) {
-            CMD_ITERATE(binary->mach->hdr, cmd) {
+            CMD_ITERATE(b_mach_hdr(binary), cmd) {
                 if(cmd->cmd == LC_SEGMENT) {
                     struct segment_command *seg = (void *) cmd;
                     if(seg->vmsize == 0) continue;
@@ -94,7 +94,7 @@ uint32_t b_allocate_from_running_kernel(const struct binary *binary) {
                     }
                     // Bother, it didn't work.  So we need to increase the slide...
                     // But first we need to get rid of the gunk we did manage to allocate.
-                    CMD_ITERATE(binary->mach->hdr, cmd2) {
+                    CMD_ITERATE(b_mach_hdr(binary), cmd2) {
                         if(cmd2 == cmd) break;
                         if(cmd2->cmd == LC_SEGMENT) {
                             struct segment_command *seg2 = (void *) cmd2;
@@ -121,11 +121,11 @@ uint32_t b_allocate_from_running_kernel(const struct binary *binary) {
 
 void b_inject_into_running_kernel(struct binary *to_load, uint32_t sysent) {
     // save sysent so unload can have it
-    to_load->mach->hdr->filetype = sysent;
+    b_mach_hdr(to_load)->filetype = sysent;
 
     mach_port_t kernel_task = get_kernel_task();
 
-    CMD_ITERATE(to_load->mach->hdr, cmd) {
+    CMD_ITERATE(b_mach_hdr(to_load), cmd) {
         if(cmd->cmd == LC_SEGMENT) {
             struct segment_command *seg = (void *) cmd;
             uint32_t fs = seg->filesize;
@@ -183,7 +183,7 @@ void b_inject_into_running_kernel(struct binary *to_load, uint32_t sysent) {
                                 (vm_offset_t) &orig_sysent,
                                 &whatever));
 
-    CMD_ITERATE(to_load->mach->hdr, cmd) {
+    CMD_ITERATE(b_mach_hdr(to_load), cmd) {
         if(cmd->cmd == LC_SEGMENT) {
             struct segment_command *seg = (void *) cmd;
             struct section *sections = (void *) (seg + 1);
@@ -313,13 +313,14 @@ void b_running_kernel_load_macho(struct binary *binary) {
 
     ok:;
 
-    binary->actual_cpusubtype = binary->mach->hdr->cpusubtype;
+    binary->cputype = b_mach_hdr(binary)->cputype;
+    binary->cpusubtype = b_mach_hdr(binary)->cpusubtype;
 
-    if(binary->mach->hdr->sizeofcmds > size - sizeof(*binary->mach->hdr)) {
+    if(b_mach_hdr(binary)->sizeofcmds > size - sizeof(*b_mach_hdr(binary))) {
         die("sizeofcmds is too big");
     }
     addr_t maxoff = 0;
-    CMD_ITERATE(binary->mach->hdr, cmd) {
+    CMD_ITERATE(b_mach_hdr(binary), cmd) {
         if(cmd->cmd == LC_SEGMENT) {
             struct segment_command *scmd = (void *) cmd;
             addr_t newmax = scmd->fileoff + scmd->filesize;
@@ -329,7 +330,7 @@ void b_running_kernel_load_macho(struct binary *binary) {
 
     char *buf = malloc(maxoff);
 
-    CMD_ITERATE(binary->mach->hdr, cmd) {
+    CMD_ITERATE(b_mach_hdr(binary), cmd) {
         if(cmd->cmd == LC_SEGMENT) {
             struct segment_command *scmd = (void *) cmd;
             addr_t off = scmd->fileoff;

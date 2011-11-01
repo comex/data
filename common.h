@@ -49,9 +49,7 @@ typedef struct { void *start; size_t size; } prange_t;
 
 __BEGIN_DECLS
 
-prange_t pdup(prange_t range);
-void pfree(prange_t range);
-void punmap(prange_t range);
+prange_t pdup(prange_t range, size_t newsize, size_t offset);
 
 bool is_valid_range(prange_t range);
 
@@ -66,7 +64,7 @@ uint32_t parse_hex_uint32(const char *string);
 
 __attribute__((noreturn)) void _die(const char *fmt, ...);
 
-#if !defined(__APPLE__) || __DARWIN_C_LEVEL < 200809L
+#if defined(__APPLE__) && __DARWIN_C_LEVEL < 200809L
 static inline size_t strnlen(const char *s, size_t n) {
   const char *p = (const char *) memchr(s, 0, n);
   return p ? (size_t) (p-s) : n;

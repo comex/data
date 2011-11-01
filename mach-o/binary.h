@@ -4,7 +4,10 @@
 #define CMD_ITERATE(hdr, cmd) for(struct load_command *cmd = (struct load_command *)((hdr) + 1), *end = (struct load_command *)((char *)(hdr + 1) + (hdr)->sizeofcmds); cmd < end; cmd = (struct load_command *)((char *)cmd + cmd->cmdsize))
 
 struct mach_binary {
+    // this is unnecessary, don't use it
     struct mach_header *hdr;
+
+    // this stuff is _all_ symbols...
 
     struct nlist *symtab;
     uint32_t nsyms;
@@ -25,9 +28,12 @@ struct mach_binary {
 
 __BEGIN_DECLS
 
+static inline struct mach_header *b_mach_hdr(const struct binary *binary) {
+    return binary->valid_range.start + binary->header_offset;
+}
+
 __attribute__((const)) range_t b_macho_segrange(const struct binary *binary, const char *segname);
 __attribute__((const)) range_t b_macho_sectrange(const struct binary *binary, const char *segname, const char *sectname);
-void b_macho_store(struct binary *binary, const char *path);
 
 void b_prange_load_macho(struct binary *binary, prange_t range, size_t offset, const char *name);
 void b_prange_load_macho_nosyms(struct binary *binary, prange_t range, size_t offset, const char *name);

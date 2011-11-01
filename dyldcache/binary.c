@@ -31,9 +31,11 @@ void b_prange_load_dyldcache(struct binary *binary, prange_t pr, const char *nam
     }
     char *thing = binary->dyld->hdr->magic + sizeof(binary->dyld->hdr->magic) - 7;
     if(!memcmp(thing, " armv7", 7)) {
-        binary->actual_cpusubtype = 9;
+        binary->cputype = CPU_TYPE_ARM;
+        binary->cpusubtype = CPU_SUBTYPE_ARM_V7;
     } else if(!memcmp(thing, " armv6", 7)) {
-        binary->actual_cpusubtype = 6;
+        binary->cputype = CPU_TYPE_ARM;
+        binary->cpusubtype = CPU_SUBTYPE_ARM_V6;
     } else {
         die("unknown processor in magic: %.6s", thing);
     }
@@ -84,13 +86,13 @@ void b_dyldcache_load_macho(const struct binary *binary, const char *filename, s
         
         // look for reexports (maybe blowing the stack)
         int count = 0;
-        CMD_ITERATE(out->mach->hdr, cmd) {
+        CMD_ITERATE(b_mach_hdr(out), cmd) {
             if(cmd->cmd == LC_REEXPORT_DYLIB) count++;
         }
         if(count > 0 && count < 1000) {
             out->nreexports = (unsigned int) count;
             struct binary *p = out->reexports = malloc(out->nreexports * sizeof(struct binary));
-            CMD_ITERATE(out->mach->hdr, cmd) {
+            CMD_ITERATE(b_mach_hdr(out), cmd) {
                 if(cmd->cmd == LC_REEXPORT_DYLIB) {
                     const char *name = convert_lc_str(cmd, ((struct dylib_command *) cmd)->dylib.name);
                     b_dyldcache_load_macho(binary, name, p);

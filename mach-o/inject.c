@@ -3,8 +3,183 @@
 #include "headers/loader.h"
 #include "headers/nlist.h"
 #include "headers/reloc.h"
-#include "headers/machine.h"
 #include <stddef.h>
+
+addr_t b_allocate_vmaddr(const struct binary *binary) {
+    addr_t max = 0;
+
+    for(uint32_t i = 0; i < binary->nsegments; i++) {
+        const range_t *range = &binary->segments[i].vm_range;
+        addr_t newmax = range->start + range->size;
+        if(newmax > max) max = newmax;
+    }
+
+    return (max + 0xfff) & ~0xfffu;
+}
+
+// this function is used by both b_macho_extend_cmds and b_inject_macho_binary
+static void handle_retarded_dyld_info(void *ptr, uint32_t size, int num_segments, int num_dylibs, bool kill_dones) {
+    // seriously, take a look at dyldinfo.cpp from ld64, especially, in this case, the separate handing of different LC_DYLD_INFO sections and the different meaning of BIND_OPCODE_DONE in lazy bind vs the other binds
+    // not to mention the impossibility of reading this data without knowing every single opcode
+    // and the lack of nop
+    void *end = ptr + size;
+    while(ptr != end) { 
+        uint8_t byte = read_int(&ptr, end, uint8_t);
+        uint8_t immediate = byte & BIND_IMMEDIATE_MASK;
+        uint8_t opcode = byte & BIND_OPCODE_MASK;
+        switch(opcode){
+        // things we actually care about:
+        case BIND_OPCODE_DONE:
+            if(kill_dones) {
+                *((uint8_t *) ptr - 1) = BIND_OPCODE_SET_TYPE_IMM | BIND_TYPE_POINTER;
+            }
+            break;
+        case BIND_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB: {
+            // update the segment number
+            uint8_t *p = ptr - 1;
+            //printf("incr'ing %u by %u\n", (unsigned int) immediate, (unsigned int) num_segments);
+            *p = (*p & BIND_OPCODE_MASK) | (immediate + num_segments);
+            read_uleb128(&ptr, end);
+            break;
+        }
+        case BIND_OPCODE_SET_DYLIB_ORDINAL_IMM:
+            if(immediate + num_dylibs > BIND_IMMEDIATE_MASK) {
+                die("too many dylibs (imm)");
+            }
+            *((uint8_t *) ptr - 1) = opcode | (immediate + num_dylibs);
+            break;
+        case BIND_OPCODE_SET_DYLIB_ORDINAL_ULEB: {
+            uint8_t ordinal = read_int(&ptr, end, uint8_t);
+            if(ordinal + num_dylibs > 0x7f) {
+                die("too many dylibs (uleb)");
+            }
+            *((uint8_t *) ptr - 1) = ordinal + num_dylibs;
+            break;
+        }
+
+        // things we have to get through
+        case BIND_OPCODE_SET_SYMBOL_TRAILING_FLAGS_IMM:
+            ptr += strnlen(ptr, end - ptr);
+            if(ptr == end) 
+            break;
+        case BIND_OPCODE_SET_ADDEND_SLEB: // actually sleb (and I like how read_uleb128 and read_sleb128 in dyldinfo.cpp are completely separate functions), but read_uleb128 should work
+        case BIND_OPCODE_ADD_ADDR_ULEB:
+        case BIND_OPCODE_DO_BIND_ADD_ADDR_ULEB:
+            read_uleb128(&ptr, end);
+            break;
+
+        case BIND_OPCODE_DO_BIND_ULEB_TIMES_SKIPPING_ULEB:
+            read_uleb128(&ptr, end);
+            read_uleb128(&ptr, end);
+            break;
+        }
+    }
+}
+
+
+uint32_t b_macho_extend_cmds(struct binary *binary, size_t space) {
+    size_t old_size = b_mach_hdr(binary)->sizeofcmds;
+    size_t new_size = old_size + space;
+    if((new_size >> 12) == (old_size >> 12)) {
+        // good enough, it'll fit
+        return (new_size + 0xfff) & ~0xfff;
+    }
+
+    // looks like we need to make a duplicate header and do ugly stuff
+    size_t stuff_size = (sizeof(struct mach_header) + sizeof(struct segment_command) + new_size + 0xfff) & ~0xfff;
+
+    #define X(a) if(a) a += stuff_size;
+    CMD_ITERATE(b_mach_hdr(binary), cmd) {
+        switch(cmd->cmd) {
+        case LC_SEGMENT: {
+            struct segment_command *seg = (void *) cmd;
+            seg->fileoff += stuff_size;
+            struct section *sect = (void *) (seg + 1);
+            for(uint32_t i = 0; i < seg->nsects; i++, sect++) {
+                sect->offset += stuff_size;
+                X(sect->reloff)
+            }
+            break;
+        }
+        case LC_SYMTAB: {
+            struct symtab_command *sym = (void *) cmd;
+            X(sym->symoff)
+            X(sym->stroff)
+            break;
+        }
+        case LC_DYSYMTAB: {
+            struct dysymtab_command *dys = (void *) cmd;
+            X(dys->tocoff)
+            X(dys->modtaboff)
+            X(dys->extrefsymoff)
+            X(dys->indirectsymoff)
+            X(dys->extreloff)
+            X(dys->locreloff)
+            break;
+        }
+        case LC_TWOLEVEL_HINTS: {
+            struct twolevel_hints_command *two = (void *) cmd;
+            X(two->offset)
+            break;
+        }
+        case LC_CODE_SIGNATURE:
+        case LC_SEGMENT_SPLIT_INFO:
+        case 38 /*LC_FUNCTION_STARTS*/: {
+            // this is sort of a best (but rather bad) guess - all three commands will probably be screwed up by being moved like this
+            struct linkedit_data_command *dat = (void *) cmd;
+            X(dat->dataoff)
+            break;
+        }
+        case LC_ENCRYPTION_INFO: {
+            struct encryption_info_command *enc = (void *) cmd;
+            X(enc->cryptoff)
+            break;
+        }
+        case LC_DYLD_INFO:
+        case LC_DYLD_INFO_ONLY: {
+            struct dyld_info_command *dyl = (void *) cmd;
+            X(dyl->rebase_off)
+            X(dyl->export_off)
+            #define Y(a) if(dyl->a##_off) { \
+                prange_t pr = rangeconv_off((range_t) {binary, dyl->a##_off, dyl->a##_size}, MUST_FIND); \
+                handle_retarded_dyld_info(pr.start, pr.size, 1, 0, false); \
+                dyl->a##_off += stuff_size; \
+            }
+            Y(bind)
+            Y(weak_bind)
+            Y(lazy_bind)
+            #undef Y
+            break;
+        }
+        }
+    }
+    #undef X
+
+    binary->valid_range = pdup(binary->valid_range, ((binary->valid_range.size + 0xfff) & ~0xfff) + stuff_size, stuff_size);
+    struct mach_header *hdr = binary->valid_range.start;
+    struct segment_command *seg = (void *) (hdr + 1);
+    memcpy(hdr, binary->valid_range.start + stuff_size, sizeof(*hdr));
+    memcpy(seg + 1, binary->valid_range.start + stuff_size + sizeof(struct mach_header), hdr->sizeofcmds);
+
+    hdr->ncmds++;
+    hdr->sizeofcmds += sizeof(*seg);
+
+    seg->cmd = LC_SEGMENT;
+    seg->cmdsize = sizeof(*seg);
+    // yes, it MUST be called __TEXT.
+    static const char name[16] = "__TEXT";
+    memcpy(seg->segname, name, 16);
+    seg->vmaddr = b_allocate_vmaddr(binary);
+    seg->vmsize = stuff_size;
+    seg->fileoff = 0;
+    seg->filesize = stuff_size;
+    seg->maxprot = seg->initprot = PROT_READ | PROT_EXEC;
+    seg->nsects = 0;
+    seg->flags = 0;
+
+    return stuff_size - sizeof(struct mach_header);
+}
+
 
 // cctool's checkout.c insists on this exact order
 enum {
@@ -64,7 +239,6 @@ static const struct moveref {
               // the whole thing is a symbol number
     [MM_INDIRECT]  = {MM_LOCALSYM, MM_UNDEFSYM, 0}
 };
-
 
 static bool catch_linkedit(struct mach_header *hdr, struct linkedit_info *li, bool patch) {
     memset(li, 0, sizeof(*li));
@@ -164,78 +338,20 @@ static bool catch_linkedit(struct mach_header *hdr, struct linkedit_info *li, bo
             // hope you didn't need that stuff <3
             if(patch) {
                 hdr->sizeofcmds -= cmd->cmdsize;
-                hdr->ncmds--;
                 size_t copysize = hdr->sizeofcmds - ((char *) cmd - (char *) (hdr + 1));
+                hdr->ncmds--;
                 memcpy(cmd, (char *) cmd + cmd->cmdsize, copysize);
+                // don't run off the end
                 if(!copysize) goto end;
                 goto restart;
             }
             break;
         }
-        // xxx - this should be immutable but we are overwriting it
     }
     end:
     // we want both binaries to have a symtab and dysymtab, makes things easier
     if(!li->symtab || !li->dysymtab) die("symtab/dysymtab missing");
     return ret;
-}
-
-static void handle_retarded_dyld_info(void *ptr, uint32_t size, int num_segments, int num_dylibs, bool kill_dones) {
-    // seriously, take a look at dyldinfo.cpp from ld64, especially, in this case, the separate handing of different LC_DYLD_INFO sections and the different meaning of BIND_OPCODE_DONE in lazy bind vs the other binds
-    // not to mention the impossibility of reading this data without knowing every single opcode
-    // and the lack of nop
-    void *end = ptr + size;
-    while(ptr != end) { 
-        uint8_t byte = read_int(&ptr, end, uint8_t);
-        uint8_t immediate = byte & BIND_IMMEDIATE_MASK;
-        uint8_t opcode = byte & BIND_OPCODE_MASK;
-        switch(opcode){
-        // things we actually care about:
-        case BIND_OPCODE_DONE:
-            if(kill_dones) {
-                *((uint8_t *) ptr - 1) = BIND_OPCODE_SET_TYPE_IMM | BIND_TYPE_POINTER;
-            }
-            break;
-        case BIND_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB: {
-            // update the segment number
-            uint8_t *p = ptr - 1;
-            //printf("incr'ing %u by %u\n", (unsigned int) immediate, (unsigned int) num_segments);
-            *p = (*p & BIND_OPCODE_MASK) | (immediate + num_segments);
-            read_uleb128(&ptr, end);
-            break;
-        }
-        case BIND_OPCODE_SET_DYLIB_ORDINAL_IMM:
-            if(immediate + num_dylibs > BIND_IMMEDIATE_MASK) {
-                die("too many dylibs (imm)");
-            }
-            *((uint8_t *) ptr - 1) = opcode | (immediate + num_dylibs);
-            break;
-        case BIND_OPCODE_SET_DYLIB_ORDINAL_ULEB: {
-            uint8_t ordinal = read_int(&ptr, end, uint8_t);
-            if(ordinal + num_dylibs > 0x7f) {
-                die("too many dylibs (uleb)");
-            }
-            *((uint8_t *) ptr - 1) = ordinal + num_dylibs;
-            break;
-        }
-
-        // things we have to get through
-        case BIND_OPCODE_SET_SYMBOL_TRAILING_FLAGS_IMM:
-            ptr += strnlen(ptr, end - ptr);
-            if(ptr == end) 
-            break;
-        case BIND_OPCODE_SET_ADDEND_SLEB: // actually sleb (and I like how read_uleb128 and read_sleb128 in dyldinfo.cpp are completely separate functions), but read_uleb128 should work
-        case BIND_OPCODE_ADD_ADDR_ULEB:
-        case BIND_OPCODE_DO_BIND_ADD_ADDR_ULEB:
-            read_uleb128(&ptr, end);
-            break;
-
-        case BIND_OPCODE_DO_BIND_ULEB_TIMES_SKIPPING_ULEB:
-            read_uleb128(&ptr, end);
-            read_uleb128(&ptr, end);
-            break;
-        }
-    }
 }
 
 static void fixup_stub_helpers(int cputype, void *base, size_t size, uint32_t incr) {
@@ -267,15 +383,14 @@ static void fixup_stub_helpers(int cputype, void *base, size_t size, uint32_t in
     }
 }
 
-void b_inject_into_macho_fd(const struct binary *binary, int fd, addr_t (*find_hack_func)(const struct binary *binary), bool userland) {
-
+void b_inject_macho_binary(struct binary *target, const struct binary *binary, addr_t (*find_hack_func)(const struct binary *binary), bool userland) {
 #define ADD_COMMAND(size) ({ \
-        uint32_t header_off = sizeof(struct mach_header) + hdr->sizeofcmds; \
-        if(header_off + (size) > 0x1000) { \
-            die("not enough space"); \
+        void *ret = (char *) hdr + sizeof(struct mach_header) + hdr->sizeofcmds; \
+        uint32_t newsize = hdr->sizeofcmds + size; \
+        if(newsize > sizeofcmds_limit) { \
+            die("not enough space for commands"); \
         } \
         hdr->ncmds++; \
-        void *ret = (char *) hdr + header_off; \
         hdr->sizeofcmds += (uint32_t) (size); \
         ret; \
     })
@@ -283,7 +398,6 @@ void b_inject_into_macho_fd(const struct binary *binary, int fd, addr_t (*find_h
 #define ADD_SEGMENT(size) ({ \
         uint32_t ret = (seg_off + 0xfff) & ~0xfff; \
         seg_off = ret + (size); \
-        lseek(fd, seg_off, SEEK_SET); \
         ret; \
     })
 
@@ -293,40 +407,38 @@ void b_inject_into_macho_fd(const struct binary *binary, int fd, addr_t (*find_h
         ret; \
     })
         
-    off_t seg_off = lseek(fd, 0, SEEK_END);
+    uint32_t sizeofcmds_limit = b_macho_extend_cmds(target, b_mach_hdr(binary)->sizeofcmds);
+
+    size_t seg_off = target->valid_range.size;
     addr_t seg_addr = 0;
 
-    struct mach_header *hdr = mmap(NULL, 0x1000, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-    if(hdr == MAP_FAILED) edie("could not mmap hdr in read/write mode");
-    if(hdr->sizeofcmds > 0x1000 || hdr->sizeofcmds + sizeof(struct mach_header) > 0x1000) {
-        die("too many commands");
-    }
+    struct mach_header *hdr = b_mach_hdr(target);
+    hdr->flags &= ~MH_PIE;
+
+    const struct binary *binaries[] = {binary, target};
     
     // in userland mode, we cut off the LINKEDIT segment  (for target, only if it's at the end of the binary)
     struct linkedit_info li[2];
     if(userland) {
-        if(catch_linkedit(binary->mach->hdr, &li[0], false)) {
-            li[0].linkedit_ptr = rangeconv_off((range_t) {binary, li[0].linkedit_range.start, li[0].linkedit_range.size}, MUST_FIND).start;
-        }
-        if(catch_linkedit(hdr, &li[1], true)) {
-            li[1].linkedit_ptr = mmap(NULL, li[1].linkedit_range.size, PROT_READ, MAP_PRIVATE, fd, li[1].linkedit_range.start);
-            if(li[1].linkedit_ptr == MAP_FAILED) edie("could not map target __LINKEDIT");
-            if((off_t) (li[1].linkedit_range.start + li[1].linkedit_range.size) == seg_off) {
-                seg_off = li[1].linkedit_range.start;
-                ftruncate(fd, seg_off);
+        for(int i = 0; i < 2; i++) { 
+            if(catch_linkedit(b_mach_hdr(binaries[i]), &li[i], i == 1)) {
+                li[i].linkedit_ptr = rangeconv_off((range_t) {binaries[i], li[i].linkedit_range.start, li[i].linkedit_range.size}, MUST_FIND).start;
             }
+        }
+        if((size_t) (li[1].linkedit_range.start + li[1].linkedit_range.size) == seg_off) {
+            target->valid_range.size = seg_off = li[1].linkedit_range.start;
         }
         if((li[0].dyld_info != 0) != (li[1].dyld_info != 0)) {
             die("LC_DYLD_INFO(_ONLY) should be in both or neither");
         }
     }
 
-    off_t header_off = (off_t) (sizeof(struct mach_header) + hdr->sizeofcmds);
-
     uint32_t init_ptrs[100];
     int num_init_ptrs = 0;
     uint32_t *reserved1s[100];
     int num_reserved1s = 0;
+    struct copy { ptrdiff_t off; void *start; size_t size; } copies[100];
+    int num_copies = 0;
 
     int num_segments, num_dylibs;
     if(userland) {
@@ -350,10 +462,8 @@ void b_inject_into_macho_fd(const struct binary *binary, int fd, addr_t (*find_h
 
                     // xxx - what happens if there is no dyld_info?
                     if(li[0].dyld_info && !strcmp(sect->sectname, "__stub_helper")) {
-                        void *segdata = mmap(NULL, seg->filesize, PROT_READ | PROT_WRITE, MAP_SHARED, fd, seg->fileoff);
-                        if(segdata == MAP_FAILED) edie("could not map stub_helper");
+                        void *segdata = rangeconv_off((range_t) {target, seg->fileoff, seg->filesize}, MUST_FIND).start;
                         fixup_stub_helpers(hdr->cputype, segdata + sect->offset - seg->fileoff, sect->size, *li[0].moveme[MM_LAZY_BIND].size);
-                        munmap(segdata, seg->filesize);
                     }
                 }
                 break;
@@ -365,7 +475,7 @@ void b_inject_into_macho_fd(const struct binary *binary, int fd, addr_t (*find_h
         }
     }
 
-    CMD_ITERATE(binary->mach->hdr, cmd) {
+    CMD_ITERATE(b_mach_hdr(binary), cmd) {
         switch(cmd->cmd) {
         case LC_SEGMENT: {
             struct segment_command *seg = (void *) cmd;
@@ -384,11 +494,7 @@ void b_inject_into_macho_fd(const struct binary *binary, int fd, addr_t (*find_h
 
             newseg->fileoff = (uint32_t) ADD_SEGMENT(pr.size);
             //printf("setting fileoff to %u\n", newseg->fileoff);
-            if((size_t) pwrite(fd, pr.start, pr.size, newseg->fileoff) != pr.size) {
-                die("couldn't write additional segment");
-            }
-
-            header_off += size;
+            if(num_copies < 100) copies[num_copies++] = (struct copy) {newseg->fileoff, pr.start, pr.size};
             
             struct section *sections = (void *) (newseg + 1);
             for(uint32_t i = 0; i < seg->nsects; i++) {
@@ -444,13 +550,9 @@ void b_inject_into_macho_fd(const struct binary *binary, int fd, addr_t (*find_h
 
         uint32_t bytes_to_move = 12; // don't cut the MRC in two!
 
-        struct binary kern;
-        b_init(&kern);
-        b_prange_load_macho(&kern, load_fd(fd, false), 0, "kern");
-        addr_t hack_func = find_hack_func(&kern);
+        addr_t hack_func = find_hack_func(target);
         fprintf(stderr, "hack_func = %08x\n", hack_func);
-        prange_t hack_func_pr = rangeconv((range_t) {&kern, hack_func & ~1, bytes_to_move}, MUST_FIND);
-        range_t hack_func_off_range = range_to_off_range((range_t) {&kern, hack_func & ~1, sizeof(part0) + sizeof(uint32_t)}, MUST_FIND);
+        prange_t hack_func_pr = rangeconv((range_t) {target, hack_func & ~1, bytes_to_move}, MUST_FIND);
 
         // allocate a new segment for the stub
 
@@ -474,44 +576,36 @@ void b_inject_into_macho_fd(const struct binary *binary, int fd, addr_t (*find_h
         newseg->nsects = 0;
         newseg->flags = 0;
 
+        void *ptr = malloc(stub_size);
         for(int i = 0; i < num_init_ptrs; i++) {
-            if(write(fd, part1, sizeof(part1)) != sizeof(part1) ||
-               write(fd, &init_ptrs[i], 4) != 4) {
-                edie("couldn't write part1");
-            }
+            memcpy(ptr, part1, sizeof(part1));
+            ptr += sizeof(part1);
+            memcpy(ptr, &init_ptrs[i], 4);
+            ptr += 4;
             part1[0] = 0x46c0;
         }
+
+        memcpy(ptr, part2, sizeof(part2));
+        ptr += sizeof(part2);
+
+        memcpy(ptr, hack_func_pr.start, bytes_to_move);
+        ptr += bytes_to_move;
         
-        if(write(fd, part2, sizeof(part2)) != sizeof(part2)) {
-            edie("couldn't write part2");
-        }
-
-        if((size_t) write(fd, hack_func_pr.start, bytes_to_move) != bytes_to_move) {
-            edie("couldn't write moved bytes");
-        }
-
-        if(write(fd, part3, sizeof(part3)) != sizeof(part3)) {
-            edie("couldn't write part3");
-        }
+        memcpy(ptr, part3, sizeof(part3));
+        ptr += sizeof(part3);
 
         uint32_t new_addr = hack_func + bytes_to_move;
-
-        if(write(fd, &new_addr, sizeof(new_addr)) != sizeof(new_addr)) {
-            edie("couldn't write new_addr");
-        }
+        memcpy(ptr, &new_addr, 4);
+        ptr += 4;
         
-        lseek(fd, hack_func_off_range.start, SEEK_SET);
-
-        if(write(fd, part0, sizeof(part0)) != sizeof(part0)) {
-            edie("couldn't write part0");
-        }
-
         new_addr = newseg->vmaddr | 1;
+        memcpy(hack_func_pr.start, part0, sizeof(part0));
+        memcpy(hack_func_pr.start + sizeof(part0), &new_addr, 4);
 
-        if(write(fd, &new_addr, sizeof(new_addr)) != sizeof(new_addr)) {
-            edie("couldn't write new_addr 2");
-        }
+        if(num_copies < 100) copies[num_copies++] = (struct copy) {newseg->fileoff, ptr, stub_size};
     }
+
+    autofree char *linkedit = NULL;
 
     if(userland) {
         // build the new LINKEDIT
@@ -526,7 +620,7 @@ void b_inject_into_macho_fd(const struct binary *binary, int fd, addr_t (*find_h
 
         if(newsize != 0) {
             uint32_t linkedit_off = ADD_SEGMENT(newsize);
-            autofree char *linkedit = malloc(newsize);
+            linkedit = malloc(newsize);
             uint32_t off = 0;
             
             for(int i = 0; i < NMOVEME; i++) {
@@ -615,13 +709,15 @@ void b_inject_into_macho_fd(const struct binary *binary, int fd, addr_t (*find_h
             newseg->flags = 0;
 
             //printf("off=%d newsize=%d\n", linkedit_off, newsize);
-            pwrite(fd, linkedit, newsize, linkedit_off);
+            if(num_copies < 100) copies[num_copies++] = (struct copy) {linkedit_off, linkedit, newsize};
         }
         
-        if(li[1].linkedit_ptr) munmap(li[1].linkedit_ptr, li[1].linkedit_range.size);
-
     }
 
-    munmap(hdr, 0x1000);
+    // finally, expand the binary in memory and actually copy in the new stuff
+    target->valid_range = pdup(target->valid_range, seg_off, 0);
+    for(int i = 0; i < num_copies; i++) {
+        memcpy(target->valid_range.start + copies[i].off, copies[i].start, copies[i].size);
+    }
 }
 

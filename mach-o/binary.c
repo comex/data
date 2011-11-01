@@ -2,17 +2,16 @@
 #include "headers/loader.h"
 #include "headers/nlist.h"
 #include "headers/fat.h"
-#include "headers/machine.h"
 #include "read_dyld_info.h"
 
 const int desired_cputype = CPU_TYPE_ARM;
-const int desired_cpusubtype = 0;
+const int desired_cpusubtype = CPU_SUBTYPE_ARM_V7;
 
 static addr_t sym(const struct binary *binary, const char *name, int options);
 static void copy_syms(const struct binary *binary, struct data_sym **syms, uint32_t *nsyms, int options);
 
 static void do_load_commands(struct binary *binary) {
-    struct mach_header *hdr = binary->mach->hdr;
+    struct mach_header *hdr = b_mach_hdr(binary);
     if(!prange_check(binary, (prange_t) {hdr, hdr->sizeofcmds})) {
         die("not enough room for commands");
     }
@@ -72,7 +71,10 @@ static void do_load_commands(struct binary *binary) {
 }
 
 static void do_symbols(struct binary *binary) {
-    CMD_ITERATE(binary->mach->hdr, cmd) {
+    binary->mach = calloc(sizeof(*binary->mach), 1);
+    binary->mach->hdr= b_mach_hdr(binary);
+
+    CMD_ITERATE(b_mach_hdr(binary), cmd) {
         if(cmd->cmd == LC_SEGMENT) {
             struct segment_command *seg = (void *) cmd;
             if(seg->fileoff == 0) {
@@ -127,9 +129,7 @@ void b_prange_load_macho_nosyms(struct binary *binary, prange_t pr, size_t offse
 #define _arg name
     binary->valid = true;
     binary->pointer_size = 4;
-    binary->mach = calloc(sizeof(*binary->mach), 1);
 
-    binary->valid_range = pr;
     binary->header_offset = offset;
 
     if(offset >= pr.size || offset - pr.size < sizeof(struct mach_header)) {
@@ -139,44 +139,51 @@ void b_prange_load_macho_nosyms(struct binary *binary, prange_t pr, size_t offse
     struct mach_header *hdr = pr.start + offset;
     if(hdr->magic == MH_MAGIC) {
         // thin file
-        binary->mach->hdr = hdr;
-        /*if(hdr->cputype != desired_cputype || (hdr->cpusubtype != 0 && desired_cpusubtype != 0 && hdr->cpusubtype != desired_cpusubtype)) {
-            die("thin file doesn't have the right architecture");
-        }*/
+        binary->valid_range = pr;
     } else if(hdr->magic == FAT_CIGAM) {
         if(offset) die("fat, offset != 0");
 
         struct fat_header *fathdr = (void *) hdr;
         struct fat_arch *arch = (void *)(fathdr + 1);
         uint32_t nfat_arch = SWAP32(fathdr->nfat_arch);
-        if((pr.size - sizeof(struct fat_header)) / sizeof(struct fat_arch) < nfat_arch) {
+        if(nfat_arch > (pr.size - sizeof(struct fat_header)) / sizeof(struct fat_arch)) {
             die("fat header is too small");
         }
-        binary->mach->hdr = NULL;
+        if(!nfat_arch) {
+            die("fat file is empty");
+        }
+        
+        prange_t fat_pr;
+        int highest_score = 0;
         while(nfat_arch--) {
-            if(SWAP32(arch->cputype) == desired_cputype && (arch->cpusubtype == 0 || desired_cpusubtype == 0 || SWAP32(arch->cpusubtype) == desired_cpusubtype)) {
+            int score = 0;
+            if(desired_cputype != CPU_TYPE_ANY && SWAP32(arch->cputype) == desired_cputype) {
+                score = 1;
+                if(arch->cpusubtype == 0 || (desired_cpusubtype != 0 && SWAP32(arch->cpusubtype) == desired_cpusubtype)) {
+                    score = 2;
+                }
+            }
+            if(score >= highest_score) {
+                highest_score = score;
+
                 uint32_t fat_offset = SWAP32(arch->offset);
                 if(fat_offset >= pr.size || pr.size - fat_offset < sizeof(struct mach_header)) {
                     die("fat_offset too big");
                 }
-                binary->mach->hdr = pr.start + fat_offset;
-                break;
+                fat_pr = (prange_t) {pr.start + fat_offset, pr.size - fat_offset};
             }
             arch++;
         }
 
-        if(!binary->mach->hdr) {
-            die("no compatible architectures in fat file");
-        } else if(desired_cpusubtype == 0) {
-            fprintf(stderr, "b_prange_load_macho: warning: fat, but out of apathy we just picked the first architecture with cputype %d, whose subtype was %d\n", desired_cputype, binary->mach->hdr->cpusubtype);
-        }
+        binary->valid_range = fat_pr;
     } else if(hdr->magic == MH_CIGAM || hdr->magic == FAT_MAGIC) {
         die("wrong endian");
     } else {
         die("(%08x) what is this I don't even", hdr->magic);
     }
 
-    binary->actual_cpusubtype = binary->mach->hdr->cpusubtype;
+    binary->cputype = b_mach_hdr(binary)->cputype;
+    binary->cpusubtype = b_mach_hdr(binary)->cpusubtype;
 
     do_load_commands(binary);
 #undef _arg
@@ -259,7 +266,7 @@ static addr_t trie_recurse(const struct binary *binary, void *ptr, char *start, 
                 }
                 return b_sym(&binary->reexports[address], name0, options);
             }
-            if(!(options & TO_EXECUTE)) {
+            if(binary->cputype == CPU_TYPE_ARM && !(options & TO_EXECUTE)) {
                 address &= ~1u;
             }
             return ((addr_t) address) + binary->mach->export_baseaddr;
@@ -312,7 +319,7 @@ static addr_t sym_private(const struct binary *binary, const char *name, int opt
 
 static addr_t sym_imported(const struct binary *binary, const char *name, __unused int options) {
     // most of this function is copied and pasted from link.c :$
-    CMD_ITERATE(binary->mach->hdr, cmd) {
+    CMD_ITERATE(b_mach_hdr(binary), cmd) {
         if(cmd->cmd == LC_SEGMENT) {
             struct segment_command *seg = (void *) cmd;
             struct section *sections = (void *) (seg + 1);
@@ -374,22 +381,8 @@ static void copy_syms(const struct binary *binary, struct data_sym **syms, uint3
     *nsyms = s - *syms;
 }
 
-void b_macho_store(struct binary *binary, const char *path) {
-#define _arg path
-    int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    if(fd <= 0) {
-        edie("unable to open");
-    }
-    ssize_t result = write(fd, binary->valid_range.start, binary->valid_range.size);
-    if(result < 0 || result != (ssize_t)binary->valid_range.size) {
-        edie("couldn't write whole file");
-    }
-    close(fd);
-#undef _arg
-}
-
 range_t b_macho_segrange(const struct binary *binary, const char *segname) {
-    CMD_ITERATE(binary->mach->hdr, cmd) {
+    CMD_ITERATE(b_mach_hdr(binary), cmd) {
         if(cmd->cmd == LC_SEGMENT) {
             struct segment_command *seg = (void *) cmd;
             if(!strncmp(seg->segname, segname, 16)) {
@@ -401,7 +394,7 @@ range_t b_macho_segrange(const struct binary *binary, const char *segname) {
 }
 
 range_t b_macho_sectrange(const struct binary *binary, const char *segname, const char *sectname) {
-    CMD_ITERATE(binary->mach->hdr, cmd) {
+    CMD_ITERATE(b_mach_hdr(binary), cmd) {
         if(cmd->cmd == LC_SEGMENT) {
             struct segment_command *seg = (void *) cmd;
             if(!strncmp(seg->segname, segname, 16)) {
@@ -423,10 +416,10 @@ void b_load_macho(struct binary *binary, const char *filename) {
 
 addr_t b_macho_reloc_base(const struct binary *binary) {
     // copying dyld's behavior
-    CMD_ITERATE(binary->mach->hdr, cmd) {
+    CMD_ITERATE(b_mach_hdr(binary), cmd) {
         if(cmd->cmd == LC_SEGMENT) {
             struct segment_command *seg = (void *) cmd;
-            if(binary->mach->hdr->cputype != CPU_TYPE_X86_64 || (seg->initprot & PROT_WRITE)) {
+            if(b_mach_hdr(binary)->cputype != CPU_TYPE_X86_64 || (seg->initprot & PROT_WRITE)) {
                 return seg->vmaddr;
             }
         }

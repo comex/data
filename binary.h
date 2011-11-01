@@ -1,5 +1,6 @@
 #pragma once
 #include "common.h"
+#include "headers/machine.h"
 
 // options
 #define MUST_FIND 1
@@ -34,10 +35,14 @@ struct binary {
     struct data_segment *segments;
     uint32_t nsegments; 
 
-    int actual_cpusubtype;
-    prange_t valid_range;
+    cpu_type_t cpusubtype;
+    cpu_type_t cputype;
+    uint8_t pointer_size;
 
+    prange_t valid_range;
     size_t header_offset;
+
+    uint32_t reserved[8];
 
     uint32_t last_seg;
     
@@ -49,10 +54,6 @@ struct binary {
 
     addr_t (*_sym)(const struct binary *binary, const char *name, int options);
     void (*_copy_syms)(const struct binary *binary, struct data_sym **syms, uint32_t *nsyms, int options);
-
-    uint8_t pointer_size;
-
-    uint32_t reserved[8];
 };
 
 __BEGIN_DECLS
@@ -71,6 +72,9 @@ void b_init(struct binary *binary);
 // return value is |1 if to_execute is set and it is a thumb symbol
 addr_t b_sym(const struct binary *binary, const char *name, int options);
 void b_copy_syms(const struct binary *binary, struct data_sym **syms, uint32_t *nsyms, int options);
+
+void b_store(struct binary *binary, const char *path);
+#define b_macho_store b_store
 
 __END_DECLS
 

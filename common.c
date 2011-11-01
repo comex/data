@@ -4,19 +4,30 @@
 #include <sys/types.h>
 #include <sys/mman.h>
 #include <stdarg.h>
+#ifdef __APPLE__
+#include <mach/mach.h>
+#endif
 
-prange_t pdup(prange_t range) {
-    void *buf = malloc(range.size);
-    memcpy(buf, range.start, range.size);
-    return (prange_t) {buf, range.size};
-}
-
-void pfree(prange_t range) {
-    free(range.start);
-}
-
-void punmap(prange_t range) {
-    munmap(range.start, range.size);
+prange_t pdup(prange_t range, size_t newsize, size_t offset) {
+    if(newsize < offset + range.size) {
+        die("pdup: newsize=%zu < offset=%zu + range.size=%zu", newsize, offset, range.size);
+    }
+    void *buf = mmap(NULL, newsize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+    if(buf == MAP_FAILED) {
+        edie("pdup: could not mmap");
+    }
+#ifdef __APPLE__
+    munmap(buf + offset, range.size);
+    vm_prot_t cur, max;
+    vm_address_t addr = (vm_address_t) (buf + offset);
+    kern_return_t kr = vm_remap(mach_task_self(), &addr, range.size, 0xfff, 0, mach_task_self(), (vm_address_t) range.start, true, &cur, &max, VM_INHERIT_NONE);
+    if(kr) {
+        die("pdup: kr = %d", (int) kr);
+    }
+#else
+    memcpy(buf + offset, range.start, range.size);
+#endif
+    return (prange_t) {buf, newsize};
 }
 
 bool is_valid_range(prange_t range) {
@@ -77,7 +88,9 @@ prange_t load_file(const char *filename, bool rw, mode_t *mode) {
         }
         *mode = st.st_mode;
     }
-    return load_fd(fd, rw);
+    prange_t ret = load_fd(fd, rw);
+    close(fd);
+    return ret;
 #undef _arg
 }
 
