@@ -4,15 +4,6 @@
 
 #define downcast(val, typ) ({ typeof(val) v = (val); typ t = (typ) v; if(t != v) die("out of range %s", #val); t; })
 
-static const char *convert_lc_str(const struct load_command *cmd, union lc_str lcs) {
-    const char *ret = ((const char *) cmd) + lcs.offset;
-    size_t size = cmd->cmdsize - lcs.offset;
-    if(lcs.offset >= cmd->cmdsize || strnlen(ret, size) == size) {
-        die("bad lc_str");
-    }
-    return ret;
-}
-
 void b_prange_load_dyldcache(struct binary *binary, prange_t pr, const char *name) {
 #define _arg name
 
@@ -94,7 +85,7 @@ void b_dyldcache_load_macho(const struct binary *binary, const char *filename, s
             struct binary *p = out->reexports = malloc(out->nreexports * sizeof(struct binary));
             CMD_ITERATE(b_mach_hdr(out), cmd) {
                 if(cmd->cmd == LC_REEXPORT_DYLIB) {
-                    const char *name = convert_lc_str(cmd, ((struct dylib_command *) cmd)->dylib.name);
+                    const char *name = convert_lc_str(cmd, ((struct dylib_command *) cmd)->dylib.name.offset);
                     b_dyldcache_load_macho(binary, name, p);
                     p++;
                 }

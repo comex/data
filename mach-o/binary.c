@@ -153,7 +153,7 @@ void b_prange_load_macho_nosyms(struct binary *binary, prange_t pr, size_t offse
             die("fat file is empty");
         }
         
-        prange_t fat_pr;
+        prange_t fat_pr = {NULL, 0}; /* no, gcc, it won't be used uninitialized */
         int highest_score = 0;
         while(nfat_arch--) {
             int score = 0;
@@ -426,3 +426,13 @@ addr_t b_macho_reloc_base(const struct binary *binary) {
     }
     die("no segments");
 }
+
+const char *convert_lc_str(const struct load_command *cmd, uint32_t offset) {
+    const char *ret = ((const char *) cmd) + offset;
+    size_t size = cmd->cmdsize - offset;
+    if(offset >= cmd->cmdsize || strnlen(ret, size) == size) {
+        die("bad lc_str");
+    }
+    return ret;
+}
+

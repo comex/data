@@ -18,7 +18,7 @@ addr_t b_allocate_vmaddr(const struct binary *binary) {
 }
 
 // this function is used by both b_macho_extend_cmds and b_inject_macho_binary
-static void handle_retarded_dyld_info(void *ptr, uint32_t size, int num_segments, int num_dylibs, bool kill_dones) {
+static void handle_retarded_dyld_info(void *ptr, uint32_t size, int num_segments, int *dylib_map, int num_dylib_map, bool kill_dones) {
     // seriously, take a look at dyldinfo.cpp from ld64, especially, in this case, the separate handing of different LC_DYLD_INFO sections and the different meaning of BIND_OPCODE_DONE in lazy bind vs the other binds
     // not to mention the impossibility of reading this data without knowing every single opcode
     // and the lack of nop
@@ -43,20 +43,35 @@ static void handle_retarded_dyld_info(void *ptr, uint32_t size, int num_segments
             break;
         }
         case BIND_OPCODE_SET_DYLIB_ORDINAL_IMM:
-            if(immediate + num_dylibs > BIND_IMMEDIATE_MASK) {
-                die("too many dylibs (imm)");
-            }
-            *((uint8_t *) ptr - 1) = opcode | (immediate + num_dylibs);
-            break;
-        case BIND_OPCODE_SET_DYLIB_ORDINAL_ULEB: {
-            uint8_t ordinal = read_int(&ptr, end, uint8_t);
-            if(ordinal + num_dylibs > 0x7f) {
-                die("too many dylibs (uleb)");
-            }
-            *((uint8_t *) ptr - 1) = ordinal + num_dylibs;
-            break;
-        }
+            if(dylib_map) {
+                if(immediate == BIND_SPECIAL_DYLIB_SELF) break;
+                if(immediate >= num_dylib_map) {
+                    die("invalid dylib reference");
+                }
+                if(dylib_map[immediate] > BIND_IMMEDIATE_MASK) {
+                    //die("too many dylibs (imm)");
+                    *((uint8_t *) ptr - 1) = BIND_OPCODE_SET_DYLIB_SPECIAL_IMM | ;
 
+                } else {
+                    *((uint8_t *) ptr - 1) = opcode | dylib_map[immediate];
+                }
+            }
+            break;
+        case BIND_OPCODE_SET_DYLIB_ORDINAL_ULEB:
+            if(dylib_map) {
+                uint8_t ordinal = read_int(&ptr, end, uint8_t);
+                if(ordinal == BIND_SPECIAL_DYLIB_SELF) break;
+                if(ordinal >= num_dylib_map) {
+                    die("invalid dylib reference");
+                }
+                if(dylib_map[ordinal] > 0x7f) {
+                    die("too many dylibs (uleb)");
+                }
+                *((uint8_t *) ptr - 1) = dylib_map[ordinal];
+            } else {
+                read_uleb128(&ptr, end);
+            }
+            break;
         // things we have to get through
         case BIND_OPCODE_SET_SYMBOL_TRAILING_FLAGS_IMM:
             ptr += strnlen(ptr, end - ptr);
@@ -142,7 +157,7 @@ uint32_t b_macho_extend_cmds(struct binary *binary, size_t space) {
             X(dyl->export_off)
             #define Y(a) if(dyl->a##_off) { \
                 prange_t pr = rangeconv_off((range_t) {binary, dyl->a##_off, dyl->a##_size}, MUST_FIND); \
-                handle_retarded_dyld_info(pr.start, pr.size, 1, 0, false); \
+                handle_retarded_dyld_info(pr.start, pr.size, 1, NULL, 0, false); \
                 dyl->a##_off += stuff_size; \
             }
             Y(bind)
@@ -434,16 +449,20 @@ void b_inject_macho_binary(struct binary *target, const struct binary *binary, a
     }
 
     uint32_t init_ptrs[100];
-    int num_init_ptrs = 0;
+    unsigned num_init_ptrs = 0;
     uint32_t *reserved1s[100];
-    int num_reserved1s = 0;
+    unsigned num_reserved1s = 0;
     struct copy { ptrdiff_t off; void *start; size_t size; } copies[100];
-    int num_copies = 0;
+    unsigned num_copies = 0;
+    // the names of the source's loaded dylibs
+    const char *dylib_names[100];
+    unsigned num_dylibs = 0;
+    // dylib ordinal from target -> source
+    int dylib_map[100] = {0};
+    unsigned num_dylib_map = 1; // size of dylib_map
 
-    int num_segments, num_dylibs;
+    unsigned num_segments = 0;
     if(userland) {
-        num_segments = 0;
-        num_dylibs = 0;
         CMD_ITERATE(hdr, cmd) {
             switch(cmd->cmd) {
             case LC_SEGMENT: {
@@ -469,7 +488,7 @@ void b_inject_macho_binary(struct binary *target, const struct binary *binary, a
                 break;
             }
             case LC_LOAD_DYLIB:
-                num_dylibs++;
+                if(num_dylibs < 100) dylib_names[num_dylibs++] = convert_lc_str(cmd, ((struct dylib_command *) cmd)->dylib.name.offset);
                 break;
             }
         }
@@ -513,9 +532,22 @@ void b_inject_macho_binary(struct binary *target, const struct binary *binary, a
         }
         case LC_LOAD_DYLIB:
             if(userland) {
+                unsigned int targetlib;
+                const char *name = convert_lc_str(cmd, ((struct dylib_command *) cmd)->dylib.name.offset);
+                for(targetlib = 0; targetlib < num_dylibs; targetlib++) {
+                    if(!strcmp(name, dylib_names[targetlib])) {
+                        goto ok;
+                    }
+                }
+
+                // otherwise, we have to add a new LC
+                
                 void *newcmd = ADD_COMMAND(cmd->cmdsize);
                 memcpy(newcmd, cmd, cmd->cmdsize);
-                
+                num_dylibs++;
+
+                ok:
+                if(num_dylib_map < 100) dylib_map[num_dylib_map++] = targetlib + 1;
             }
             break;
         }
@@ -577,7 +609,7 @@ void b_inject_macho_binary(struct binary *target, const struct binary *binary, a
         newseg->flags = 0;
 
         void *ptr = malloc(stub_size);
-        for(int i = 0; i < num_init_ptrs; i++) {
+        for(unsigned i = 0; i < num_init_ptrs; i++) {
             memcpy(ptr, part1, sizeof(part1));
             ptr += sizeof(part1);
             memcpy(ptr, &init_ptrs[i], 4);
@@ -671,18 +703,23 @@ void b_inject_macho_binary(struct binary *target, const struct binary *binary, a
             {
                 struct moveme *restrict m = &li[0].moveme[MM_UNDEFSYM];
                 for(struct nlist *nl = m->copied_to; (void *) (nl + 1) <= (m->copied_to + m->copied_size); nl++) {
-                    uint16_t lib = GET_LIBRARY_ORDINAL(nl->n_desc);
+                    unsigned lib = GET_LIBRARY_ORDINAL(nl->n_desc);
                     if(lib != SELF_LIBRARY_ORDINAL && lib <= MAX_LIBRARY_ORDINAL) {
-                        if(lib + num_dylibs > MAX_LIBRARY_ORDINAL) {
-                            die("too many libraries5");
+
+                        if(lib >= num_dylib_map) {
+                            die("invalid dylib reference");
                         }
-                        SET_LIBRARY_ORDINAL(nl->n_desc, lib + num_dylibs);
+                        unsigned new = dylib_map[lib];
+                        if(new > MAX_LIBRARY_ORDINAL) {
+                            die("too many libraries");
+                        }
+                        SET_LIBRARY_ORDINAL(nl->n_desc, new + 1);
                     }
                 }
             }
 
             // ... and update section references
-            for(int i = 0; i < num_reserved1s; i++) {
+            for(unsigned i = 0; i < num_reserved1s; i++) {
                 *reserved1s[i] += *li[0].moveme[MM_INDIRECT].size;
             }
 
@@ -690,7 +727,7 @@ void b_inject_macho_binary(struct binary *target, const struct binary *binary, a
             if(li->dyld_info) {
                 for(int i = MM_BIND; i <= MM_LAZY_BIND; i++) {
                     if(*li[1].moveme[i].off) {
-                        handle_retarded_dyld_info(linkedit - linkedit_off + *li[1].moveme[i].off, *li[0].moveme[i].size, num_segments, num_dylibs, i != MM_LAZY_BIND);
+                        handle_retarded_dyld_info(linkedit - linkedit_off + *li[1].moveme[i].off, *li[0].moveme[i].size, num_segments, dylib_map, num_dylib_map, i != MM_LAZY_BIND);
                     }
                 }
             }
@@ -716,7 +753,7 @@ void b_inject_macho_binary(struct binary *target, const struct binary *binary, a
 
     // finally, expand the binary in memory and actually copy in the new stuff
     target->valid_range = pdup(target->valid_range, seg_off, 0);
-    for(int i = 0; i < num_copies; i++) {
+    for(unsigned i = 0; i < num_copies; i++) {
         memcpy(target->valid_range.start + copies[i].off, copies[i].start, copies[i].size);
     }
 }

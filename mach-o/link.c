@@ -167,7 +167,7 @@ static void do_bind_section(struct binary *load, const struct binary *target, bo
     uint8_t type = BIND_TYPE_POINTER;
     addr_t addend = 0;
     prange_t segment = {NULL, 0};
-    addr_t segaddr;
+    addr_t segaddr = 0;
     addr_t offset = 0;
 
     void *ptr = opcodes.start, *end = ptr + opcodes.size;
