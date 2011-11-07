@@ -85,7 +85,7 @@ uint32_t b_macho_extend_cmds(struct binary *binary, size_t space) {
     }
 
     // looks like we need to make a duplicate header and do ugly stuff
-    size_t stuff_size = (sizeof(struct mach_header) + sizeof(struct segment_command) + new_size + 0xfff) & ~0xfff;
+    size_t stuff_size = (sizeof(struct mach_header) + sizeof(struct segment_command) + sizeof(struct section) + new_size + 0xfff) & ~0xfff;
 
     #define X(a) if(a) a += stuff_size;
     CMD_ITERATE(b_mach_hdr(binary), cmd) {
@@ -157,24 +157,39 @@ uint32_t b_macho_extend_cmds(struct binary *binary, size_t space) {
     binary->valid_range = pdup(binary->valid_range, ((binary->valid_range.size + 0xfff) & ~0xfff) + stuff_size, stuff_size);
     struct mach_header *hdr = binary->valid_range.start;
     struct segment_command *seg = (void *) (hdr + 1);
+    struct section *sect = (void *) (seg + 1);
     memcpy(hdr, binary->valid_range.start + stuff_size, sizeof(*hdr));
-    memcpy(seg + 1, binary->valid_range.start + stuff_size + sizeof(struct mach_header), hdr->sizeofcmds);
+    memcpy(sect + 1, binary->valid_range.start + stuff_size + sizeof(struct mach_header), hdr->sizeofcmds);
 
     hdr->ncmds++;
-    hdr->sizeofcmds += sizeof(*seg);
+    hdr->sizeofcmds += sizeof(*seg) + sizeof(*sect);
 
     seg->cmd = LC_SEGMENT;
-    seg->cmdsize = sizeof(*seg);
+    seg->cmdsize = sizeof(*seg) + sizeof(*sect);
     // yes, it MUST be called __TEXT.
-    static const char name[16] = "__TEXT";
-    memcpy(seg->segname, name, 16);
+    static const char segname[16] = "__TEXT";
+    memcpy(seg->segname, segname, 16);
     seg->vmaddr = b_allocate_vmaddr(binary);
     seg->vmsize = stuff_size;
     seg->fileoff = 0;
     seg->filesize = stuff_size;
     seg->maxprot = seg->initprot = PROT_READ | PROT_EXEC;
-    seg->nsects = 0;
+    seg->nsects = 1;
     seg->flags = 0;
+
+    // we need a section to make codesign_allocate happy
+    static const char sectname[16] = "__useless";
+    memcpy(sect->sectname, sectname, 16);
+    memcpy(sect->segname, segname, 16);
+    sect->addr = seg->vmaddr + stuff_size;
+    sect->size = 0;
+    sect->offset = stuff_size;
+    sect->align = 0;
+    sect->reloff = 0;
+    sect->nreloc = 0;
+    sect->flags = 0;
+    sect->reserved1 = 0;
+    sect->reserved2 = 0;
 
     return stuff_size - sizeof(struct mach_header);
 }
@@ -406,7 +421,8 @@ void b_inject_macho_binary(struct binary *target, const struct binary *binary, a
         ret; \
     })
         
-    uint32_t sizeofcmds_limit = b_macho_extend_cmds(target, b_mach_hdr(binary)->sizeofcmds);
+    // the 0x100 is arbitrary, but intended to please codesign_allocate
+    uint32_t sizeofcmds_limit = b_macho_extend_cmds(target, b_mach_hdr(binary)->sizeofcmds + 0x100);
 
     size_t seg_off = target->valid_range.size;
     addr_t seg_addr = 0;
