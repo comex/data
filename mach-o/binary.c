@@ -20,6 +20,9 @@ static void do_load_commands(struct binary *binary) {
         if(cmd + 1 > end || cmd > end - 1) {
             die("sizeofcmds is not even");
         }
+        if(cmd->cmdsize < sizeof(struct load_command)) {
+            die("tiny command");
+        }
         if(cmd->cmdsize > (size_t) ((char *) end - (char *) cmd)) {
             die("cmdsize overflows (%u)", cmd->cmdsize);
         }

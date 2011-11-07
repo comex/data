@@ -355,6 +355,8 @@ static bool catch_linkedit(struct mach_header *hdr, struct linkedit_info *li, bo
                 size_t copysize = hdr->sizeofcmds - ((char *) cmd - (char *) (hdr + 1));
                 hdr->ncmds--;
                 memcpy(cmd, (char *) cmd + cmd->cmdsize, copysize);
+                // update this thing from the CMD_ITERATE macro
+                end = (void *) (hdr + 1) + hdr->sizeofcmds;
                 // don't run off the end
                 if(!copysize) goto end;
                 goto restart;
