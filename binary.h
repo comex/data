@@ -62,10 +62,10 @@ static inline bool prange_check(const struct binary *binary, prange_t range) {
     return binary->valid_range.start <= range.start && range.size <= (size_t) ((char *) binary->valid_range.start + binary->valid_range.size - (char *) range.start);
 }
 
-__attribute__((const)) prange_t rangeconv(range_t range, int flags);
-__attribute__((const)) prange_t rangeconv_off(range_t range, int flags);
-__attribute__((const)) range_t range_to_off_range(range_t range, int flags);
-__attribute__((const)) range_t off_range_to_range(range_t range, int flags);
+__attribute__((pure)) prange_t rangeconv(range_t range, int flags);
+__attribute__((pure)) prange_t rangeconv_off(range_t range, int flags);
+__attribute__((pure)) range_t range_to_off_range(range_t range, int flags);
+__attribute__((pure)) range_t off_range_to_range(range_t range, int flags);
 
 void b_init(struct binary *binary);
 

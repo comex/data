@@ -14,7 +14,7 @@ static unsigned int _50 = 3;
      (die("no valid alternative"), (typeof(v1+0)) 0))
 #define spec(args...) spec_(args, 10, 0, 10, 0, 10, 0)
 
-#define is_armv7(binary) (binary->actual_cpusubtype == 9)
+#define is_armv7(binary) (binary->cpusubtype == 9)
 
 static unsigned int classify(const struct binary *binary) {
     if(!is_armv7(binary)) return _armv6;

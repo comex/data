@@ -34,8 +34,8 @@ static inline struct mach_header *b_mach_hdr(const struct binary *binary) {
     return binary->valid_range.start + binary->header_offset;
 }
 
-__attribute__((const)) range_t b_macho_segrange(const struct binary *binary, const char *segname);
-__attribute__((const)) range_t b_macho_sectrange(const struct binary *binary, const char *segname, const char *sectname);
+__attribute__((pure)) range_t b_macho_segrange(const struct binary *binary, const char *segname);
+__attribute__((pure)) range_t b_macho_sectrange(const struct binary *binary, const char *segname, const char *sectname);
 
 void b_prange_load_macho(struct binary *binary, prange_t range, size_t offset, const char *name);
 void b_prange_load_macho_nosyms(struct binary *binary, prange_t range, size_t offset, const char *name);
