@@ -14,7 +14,7 @@ ifneq "$(NDEBUG)" "1"
 override CFLAGS += -g3
 endif
 
-SDK_GCC = /Developer/Platforms/iPhoneOS.platform/Developer/usr/bin/clang -isysroot /Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS5.0.sdk/ -miphoneos-version-min=4.0 -mapcs-frame -fomit-frame-pointer -mthumb
+SDK_GCC = /Developer/Platforms/iPhoneOS.platform/Developer/usr/bin/llvm-gcc-4.2 -isysroot /Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS5.0.sdk/ -miphoneos-version-min=4.0 -mapcs-frame -fomit-frame-pointer -mthumb
 
 GCC_native = gcc
 GCC_mp = gcc-mp-4.6
