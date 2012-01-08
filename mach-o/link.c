@@ -300,10 +300,7 @@ static void do_rebase(struct binary *load, prange_t opcodes, addr_t slide) {
         switch(opcode) {
         // this code is very similar to do_bind_section
         case REBASE_OPCODE_DONE:
-            if(ptr != end) {
-                die("REBASE_OPCODE_DONE not at end");
-            }
-            break;
+            return;
         case REBASE_OPCODE_SET_TYPE_IMM:
             type = immediate;
             break;
