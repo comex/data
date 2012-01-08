@@ -3,7 +3,6 @@
 #include "headers/nlist.h"
 #include "headers/reloc.h"
 #include "headers/arm_reloc.h"
-#include <assert.h>
 #include <ctype.h>
 #include "read_dyld_info.h"
 
@@ -13,7 +12,9 @@ static addr_t lookup_nth_symbol(const struct binary *load, const struct binary *
     const char *name = load->mach->strtab + nl->n_un.n_strx;
     addr_t sym = lookup_sym(target, name);
     if(!sym) {
-        if(weak || userland) {
+        if(!strcmp(name, "dyld_stub_binder")) {
+            sym = 0xdeadbeef;
+        } else if(weak || userland) {
             fprintf(stderr, "lookup_nth_symbol: couldn't find %ssymbol %s\n", weak ? "weak " : "", name);
         } else {
             die("couldn't find symbol %s\n", name);
@@ -25,7 +26,9 @@ static addr_t lookup_nth_symbol(const struct binary *load, const struct binary *
 static void relocate_area(const struct binary *load, const struct binary *target, enum reloc_mode mode, lookupsym_t lookup_sym, addr_t slide, uint32_t reloff, uint32_t nreloc) {
     struct relocation_info *things = rangeconv_off((range_t) {load, reloff, nreloc * sizeof(struct relocation_info)}, MUST_FIND).start;
     for(uint32_t i = 0; i < nreloc; i++) {
-        assert(things[i].r_length == 2);
+        if(things[i].r_length != 2) {
+            die("bad relocation length");
+        }
         addr_t address = things[i].r_address;
         if(address == 0 || things[i].r_symbolnum == R_ABS) continue;
         address += b_macho_reloc_base(load);
@@ -150,16 +153,13 @@ static void relocate_with_symtab(struct binary *load, const struct binary *targe
                 }
                 
                 relocate_area(load, target, mode, lookup_sym, slide, sect->reloff, sect->nreloc);
-                if(mode != RELOC_EXTERN_ONLY) sect->addr += slide;
             }
-            if(mode != RELOC_EXTERN_ONLY) seg->vmaddr += slide;
         }
     }
 
 }
 
 static void do_bind_section(struct binary *load, const struct binary *target, bool weak, lookupsym_t lookup_sym, prange_t opcodes) {
-    uint32_t nsegments = load->nsegments;
     uint8_t pointer_size = b_pointer_size(load);
 
     uint8_t symbol_flags;
@@ -177,7 +177,7 @@ static void do_bind_section(struct binary *load, const struct binary *target, bo
         uint8_t immediate = byte & BIND_IMMEDIATE_MASK;
         uint8_t opcode = byte & BIND_OPCODE_MASK;
 
-        addr_t count, skip;
+        addr_t count, stride;
 
         switch(opcode) {
         case BIND_OPCODE_DONE:
@@ -199,7 +199,7 @@ static void do_bind_section(struct binary *load, const struct binary *target, bo
             addend = read_sleb128(&ptr, end);
             break;
         case BIND_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB:
-            if(immediate >= nsegments) {
+            if(immediate >= load->nsegments) {
                 die("segment too high");
             }
             segment = rangeconv_off(load->segments[immediate].file_range, MUST_FIND);
@@ -211,27 +211,30 @@ static void do_bind_section(struct binary *load, const struct binary *target, bo
             break;
         case BIND_OPCODE_DO_BIND:
             count = 1;
-            skip = pointer_size;
+            stride = pointer_size;
             goto bind;
         case BIND_OPCODE_DO_BIND_ADD_ADDR_ULEB:
             count = 1;
-            skip = read_uleb128(&ptr, end) + pointer_size;
+            stride = read_uleb128(&ptr, end) + pointer_size;
             goto bind;
         case BIND_OPCODE_DO_BIND_ADD_ADDR_IMM_SCALED:
             count = 1;
-            skip = immediate * pointer_size + pointer_size;
+            stride = immediate * pointer_size + pointer_size;
             goto bind;
         case BIND_OPCODE_DO_BIND_ULEB_TIMES_SKIPPING_ULEB:
             count = read_uleb128(&ptr, end);
-            skip = read_uleb128(&ptr, end);
+            stride = read_uleb128(&ptr, end);
             goto bind;
         bind: {
             if(!sym || !segment.start) die("improper bind");
             bool _64b;
-            addr_t value = lookup_sym(target, sym);
+            addr_t value;
+            value = lookup_sym(target, sym);
             if(!value) {
-                if(weak) {
-                    offset += skip * count;
+                if(!strcmp(sym, "dyld_stub_binder")) {
+                    value = 0xdeadbeef;
+                } else if(weak) {
+                    offset += stride * count;
                     break;
                 } else {
                     die("no such symbol %s", sym);
@@ -247,24 +250,27 @@ static void do_bind_section(struct binary *load, const struct binary *target, bo
                 break;
             case BIND_TYPE_TEXT_PCREL32:
                 _64b = false;
-                value -= (segaddr + offset + 4);
+                value = -value + (segaddr + offset + 4);
                 break;
             default:
                 die("bad bind type %d", (int) type);
             }
             
+            if(offset >= segment.size ||
+               stride < (_64b ? sizeof(uint64_t) : sizeof(uint32_t)) ||
+               (segment.size - offset) / stride < count) {
+               die("bad address while binding");
+            }
+
             while(count--) {
-                if(offset >= segment.size) die("address out of range while binding");
                 if(_64b) {
-                    if(segment.size - offset < sizeof(uint64_t)) die("bind: out of space");
                     *((uint64_t *) (segment.start + offset)) = value;
                 } else {
-                    if(segment.size - offset < sizeof(uint32_t)) die("bind: out of space");
                     *((uint32_t *) (segment.start + offset)) = value;
                 }
 
-                offset += skip;
-                if(type == BIND_TYPE_TEXT_PCREL32) value -= skip;
+                offset += stride;
+                if(type == BIND_TYPE_TEXT_PCREL32) value += stride;
             }
 
             memset(orig_ptr, BIND_OPCODE_SET_TYPE_IMM, ptr - orig_ptr);
@@ -272,17 +278,115 @@ static void do_bind_section(struct binary *load, const struct binary *target, bo
             break;    
         }
         default:
-            die("unknown bind opcode");
+            die("unknown bind opcode 0x%x", (int) opcode);
+        }
+    }
+}
+
+static void do_rebase(struct binary *load, prange_t opcodes, addr_t slide) {
+    uint8_t pointer_size = b_pointer_size(load);
+    uint8_t type = REBASE_TYPE_POINTER;
+    addr_t offset = 0;
+    prange_t segment = {NULL, 0};
+
+    void *ptr = opcodes.start, *end = ptr + opcodes.size;
+    while(ptr != end) {
+        uint8_t byte = read_int(&ptr, end, uint8_t);
+        uint8_t immediate = byte & BIND_IMMEDIATE_MASK;
+        uint8_t opcode = byte & BIND_OPCODE_MASK;
+
+        addr_t count, stride;
+
+        switch(opcode) {
+        // this code is very similar to do_bind_section
+        case REBASE_OPCODE_DONE:
+            if(ptr != end) {
+                die("REBASE_OPCODE_DONE not at end");
+            }
+            break;
+        case REBASE_OPCODE_SET_TYPE_IMM:
+            type = immediate;
+            break;
+        case REBASE_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB:
+            if(immediate >= load->nsegments) {
+                die("segment too high");
+            }
+            segment = rangeconv_off(load->segments[immediate].file_range, MUST_FIND);
+            offset = read_uleb128(&ptr, end);
+            break;
+        case REBASE_OPCODE_ADD_ADDR_ULEB:
+            offset += read_uleb128(&ptr, end);
+            break;
+        case REBASE_OPCODE_ADD_ADDR_IMM_SCALED:
+            offset += immediate * pointer_size;
+            break;
+        case REBASE_OPCODE_DO_REBASE_IMM_TIMES:
+            count = immediate;
+            stride = pointer_size;
+            goto rebase;
+        case REBASE_OPCODE_DO_REBASE_ULEB_TIMES:
+            count = read_uleb128(&ptr, end);
+            stride = pointer_size;
+            goto rebase;
+        case REBASE_OPCODE_DO_REBASE_ADD_ADDR_ULEB:
+            count = 1;
+            stride = read_uleb128(&ptr, end) + pointer_size;
+            goto rebase;
+        case REBASE_OPCODE_DO_REBASE_ULEB_TIMES_SKIPPING_ULEB:
+            count = read_uleb128(&ptr, end);
+            stride = read_uleb128(&ptr, end);
+            goto rebase;
+        rebase: {
+            bool _64b;
+            switch(type) {
+            case REBASE_TYPE_POINTER:
+                _64b = pointer_size == 8;
+                break;
+            case REBASE_TYPE_TEXT_ABSOLUTE32:
+            case REBASE_TYPE_TEXT_PCREL32:
+                _64b = false;
+                break;
+            default:
+                die("bad rebase type %d", (int) type);
+            }
+
+            if(offset >= segment.size || (segment.size - offset) / stride < count) {
+               die("bad address while rebasing");
+            }
+
+            while(count--) {
+                if(_64b) {
+                    *((uint64_t *) (segment.start + offset)) += slide;
+                } else {
+                    uint32_t *ptr = segment.start + offset;
+                    *ptr += slide;
+                    if(type == REBASE_TYPE_TEXT_PCREL32) {
+                        // WTF!?  This is actually what dyld does.
+                        *ptr = -*ptr;
+                    }
+                }
+
+                offset += stride;
+            }
+            break;
+        }
+        default:
+            die("unknown rebase opcode 0x%x", (int) opcode);
         }
     }
 }
 
 static void relocate_with_dyld_info(struct binary *load, const struct binary *target, enum reloc_mode mode, lookupsym_t lookup_sym, uint32_t slide) {
-    (void) slide; // assert(slide == 0)
     // It gets more complicated
-    const struct dyld_info_command *dyld_info = load->mach->dyld_info;
+    struct dyld_info_command *dyld_info = load->mach->dyld_info;
     #define fetch(type) prange_t type = dyld_info->type##_off ? rangeconv_off((range_t) {load, dyld_info->type##_off, dyld_info->type##_size}, MUST_FIND) : (prange_t) {NULL, 0};
-    // fetch(rebase)
+
+    if(mode != RELOC_EXTERN_ONLY && slide != 0) {
+        fetch(rebase)
+        do_rebase(load, rebase, slide);
+        dyld_info->rebase_size = 0;
+    }
+
     if(mode != RELOC_LOCAL_ONLY) {
         fetch(bind)
         fetch(weak_bind)
@@ -294,28 +398,13 @@ static void relocate_with_dyld_info(struct binary *load, const struct binary *ta
 }
 
 void b_relocate(struct binary *load, const struct binary *target, enum reloc_mode mode, lookupsym_t lookup_sym, uint32_t slide) {
-    if((mode == RELOC_USERLAND || (load->mach->dyld_info && load->mach->dyld_info->cmd == LC_DYLD_INFO_ONLY)) && slide != 0) {
-        die("sliding is not supported in userland mode or with LC_DYLD_INFO_ONLY");
+    if(mode == RELOC_USERLAND && slide != 0) {
+        die("sliding is not supported in userland mode");
     }
 
-    if(mode != RELOC_USERLAND) {
-        // we can be more rigorous in this mode
-        CMD_ITERATE(load->mach->hdr, cmd) {
-            switch(cmd->cmd) {
-            case LC_SYMTAB:
-            case LC_DYSYMTAB:
-            case LC_SEGMENT:
-            case LC_ID_DYLIB:
-            case LC_UUID:
-                break;
-            default:
-                die("unrecognized load command 0x%x", cmd->cmd);
-            }
-        }
+    if(!load->mach->symtab || !load->mach->dysymtab) {
+        die("no LC_SYMTAB/LC_DYSYMTAB");
     }
-
-    assert(load->mach->symtab);
-    assert(load->mach->dysymtab);
 
     // check for overlap
     for(uint32_t i = 0; i < load->nsegments; i++) {
@@ -330,5 +419,19 @@ void b_relocate(struct binary *load, const struct binary *target, enum reloc_mod
     }
     
     (load->mach->dyld_info ? relocate_with_dyld_info : relocate_with_symtab)(load, target, mode, lookup_sym, slide);
+    
+    if(mode != RELOC_EXTERN_ONLY && slide != 0) {
+        CMD_ITERATE(b_mach_hdr(load), cmd) {
+            if(cmd->cmd == LC_SEGMENT) {
+                struct segment_command *seg = (void *) cmd;
+                struct section *sections = (void *) (seg + 1);
+                seg->vmaddr += slide;
+                for(uint32_t i = 0; i < seg->nsects; i++) {
+                    struct section *sect = &sections[i];
+                    sect->addr += slide;
+                }
+            }
+        }
+    }
 }
 

@@ -19,7 +19,7 @@ struct mach_binary {
     uint32_t ext_nsyms, imp_nsyms;
 
     // alternatively
-    const struct dyld_info_command *dyld_info;
+    struct dyld_info_command *dyld_info;
     prange_t export_trie;
     addr_t export_baseaddr;
 
