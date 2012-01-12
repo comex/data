@@ -14,8 +14,10 @@ static addr_t lookup_nth_symbol(const struct binary *load, const struct binary *
     if(!sym) {
         if(!strcmp(name, "dyld_stub_binder")) {
             sym = 0xdeadbeef;
-        } else if(weak || userland) {
-            fprintf(stderr, "lookup_nth_symbol: couldn't find %ssymbol %s\n", weak ? "weak " : "", name);
+        } else if(userland) {
+            // let it pass
+        } else if(weak) {
+            fprintf(stderr, "lookup_nth_symbol: warning: couldn't find weak symbol %s\n", name);
         } else {
             die("couldn't find symbol %s\n", name);
         }
@@ -90,13 +92,15 @@ static void relocate_area(const struct binary *load, const struct binary *target
     }
 }
 
-static void relocate_with_symtab(struct binary *load, const struct binary *target, enum reloc_mode mode, lookupsym_t lookup_sym, uint32_t slide) {
+static void relocate_with_symtab(struct binary *load, const struct binary *target, enum reloc_mode mode, lookupsym_t lookup_sym, addr_t slide) {
     if(mode != RELOC_EXTERN_ONLY && mode != RELOC_USERLAND) {
         relocate_area(load, target, mode, lookup_sym, slide, load->mach->dysymtab->locreloff, load->mach->dysymtab->nlocrel);
     }
     if(mode != RELOC_LOCAL_ONLY) {
         relocate_area(load, target, mode, lookup_sym, slide, load->mach->dysymtab->extreloff, load->mach->dysymtab->nextrel);
     }
+
+    uint8_t pointer_size = b_pointer_size(load);
 
     CMD_ITERATE(b_mach_hdr(load), cmd) {
         if(cmd->cmd == LC_SEGMENT) {
@@ -109,31 +113,48 @@ static void relocate_with_symtab(struct binary *load, const struct binary *targe
                 uint8_t type = sect->flags & SECTION_TYPE;
                 switch(type) {
                 case S_NON_LAZY_SYMBOL_POINTERS:
-                case S_LAZY_SYMBOL_POINTERS:
-                case S_SYMBOL_STUBS: {
+                case S_LAZY_SYMBOL_POINTERS: {
                     uint32_t indirect_table_offset = sect->reserved1;
-                    uint32_t *indirect = rangeconv_off((range_t) {load, (addr_t) (load->mach->dysymtab->indirectsymoff + indirect_table_offset*sizeof(uint32_t)), (sect->size / 4) * sizeof(uint32_t)}, MUST_FIND).start;
-                    uint32_t *things = rangeconv((range_t) {load, sect->addr, sect->size}, MUST_FIND).start;
-                    for(uint32_t i = 0; i < sect->size / 4; i++) {
-                        uint32_t sym = indirect[i];
-                        switch(sym) {
+                    const struct dysymtab_command *dysymtab = load->mach->dysymtab;
+                    
+
+                    uint32_t stride = type == S_SYMBOL_STUBS ? sect->reserved2 : pointer_size;
+                    uint32_t num_syms = sect->size / stride;
+
+                    if(stride < pointer_size ||
+                       num_syms * stride != sect->size ||
+                       dysymtab->nindirectsyms > ((addr_t) -(dysymtab->indirectsymoff - 1)) / sizeof(uint32_t) ||
+                       indirect_table_offset > dysymtab->nindirectsyms ||
+                       num_syms > dysymtab->nindirectsyms - indirect_table_offset) {
+                       die("bad indirect section");
+                    }
+                    
+                    uint32_t *indirect_syms = rangeconv_off((range_t) {load, (addr_t) dysymtab->indirectsymoff + indirect_table_offset * sizeof(uint32_t), num_syms * sizeof(uint32_t)}, MUST_FIND).start;
+                    void *addrs = rangeconv_off((range_t) {load, sect->offset, sect->size}, MUST_FIND).start;
+                    for(uint32_t i = 0; i < num_syms; i++, indirect_syms++, addrs += stride) {
+                        addr_t addr, found_addr;
+
+                        switch(*indirect_syms) {
                         case INDIRECT_SYMBOL_LOCAL:
-                            if(mode == RELOC_EXTERN_ONLY || mode == RELOC_USERLAND) break;
-                            if(type != S_SYMBOL_STUBS) things[i] += slide;
-                            indirect[i] = INDIRECT_SYMBOL_ABS;
+                            if(mode == RELOC_EXTERN_ONLY || mode == RELOC_USERLAND) continue;
+                            addr = read_pointer(addrs, pointer_size) + slide;
                             break;
                         case INDIRECT_SYMBOL_ABS:
-                            break;
-                        default: {
+                            continue;
+                        default:
                             if(mode == RELOC_LOCAL_ONLY) continue;
-                            //printf("setting indirect symbol %x\n", sect->addr + 4*i);
-                            uint32_t addr = lookup_nth_symbol(load, target, lookup_sym, sym, mode == RELOC_USERLAND);
-                            if(!addr && mode == RELOC_USERLAND) break;
-                            if(type != S_SYMBOL_STUBS) things[i] = addr;
-                            indirect[i] = INDIRECT_SYMBOL_ABS;
+                            found_addr = lookup_nth_symbol(load, target, lookup_sym, *indirect_syms, mode == RELOC_USERLAND);
+                            if(!found_addr && mode == RELOC_USERLAND) {
+                                // don't set to ABS! 
+                                continue;
+                            }
+
+                            addr = found_addr;
                             break;
                         }
-                        }
+
+                        write_pointer(addrs, addr, pointer_size);
+                        *indirect_syms = INDIRECT_SYMBOL_ABS;
                     }
                     break;
                 }
@@ -373,7 +394,7 @@ static void do_rebase(struct binary *load, prange_t opcodes, addr_t slide) {
     }
 }
 
-static void relocate_with_dyld_info(struct binary *load, const struct binary *target, enum reloc_mode mode, lookupsym_t lookup_sym, uint32_t slide) {
+static void relocate_with_dyld_info(struct binary *load, const struct binary *target, enum reloc_mode mode, lookupsym_t lookup_sym, addr_t slide) {
     // It gets more complicated
     struct dyld_info_command *dyld_info = load->mach->dyld_info;
     #define fetch(type) prange_t type = dyld_info->type##_off ? rangeconv_off((range_t) {load, dyld_info->type##_off, dyld_info->type##_size}, MUST_FIND) : (prange_t) {NULL, 0};
@@ -394,7 +415,7 @@ static void relocate_with_dyld_info(struct binary *load, const struct binary *ta
     }
 }
 
-void b_relocate(struct binary *load, const struct binary *target, enum reloc_mode mode, lookupsym_t lookup_sym, uint32_t slide) {
+void b_relocate(struct binary *load, const struct binary *target, enum reloc_mode mode, lookupsym_t lookup_sym, addr_t slide) {
     if(mode == RELOC_USERLAND && slide != 0) {
         die("sliding is not supported in userland mode");
     }

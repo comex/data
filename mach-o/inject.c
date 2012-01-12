@@ -240,18 +240,18 @@ struct linkedit_info {
 };
 
 static const struct moveref {
-    int target_start, target_end;
+    int target;
     ptrdiff_t offset;
 } moveref[NMOVEME] = {
-    [MM_LOCALSYM]  = {MM_STRTAB, MM_STRTAB, offsetof(struct nlist, n_un.n_strx)},
-    [MM_EXTDEFSYM] = {MM_STRTAB, MM_STRTAB, offsetof(struct nlist, n_un.n_strx)},
-    [MM_UNDEFSYM]  = {MM_STRTAB, MM_STRTAB, offsetof(struct nlist, n_un.n_strx)},
+    [MM_LOCALSYM]  = {MM_STRTAB, offsetof(struct nlist, n_un.n_strx)},
+    [MM_EXTDEFSYM] = {MM_STRTAB, offsetof(struct nlist, n_un.n_strx)},
+    [MM_UNDEFSYM]  = {MM_STRTAB, offsetof(struct nlist, n_un.n_strx)},
 
               // hooray for little endian
-    [MM_LOCREL]    = {MM_LOCALSYM, MM_UNDEFSYM, 4},
-    [MM_EXTREL]    = {MM_LOCALSYM, MM_UNDEFSYM, 4},
+    [MM_LOCREL]    = {MM_UNDEFSYM, 4},
+    [MM_EXTREL]    = {MM_UNDEFSYM, 4},
               // the whole thing is a symbol number
-    [MM_INDIRECT]  = {MM_LOCALSYM, MM_UNDEFSYM, 0}
+    [MM_INDIRECT]  = {MM_UNDEFSYM, 0}
 };
 
 static bool catch_linkedit(struct mach_header *hdr, struct linkedit_info *li, bool patch) {
@@ -474,7 +474,6 @@ void b_inject_macho_binary(struct binary *target, const struct binary *binary, a
                         break;
                     }
 
-                    // xxx - what happens if there is no dyld_info?
                     if(li[0].dyld_info && !strcmp(sect->sectname, "__stub_helper")) {
                         void *segdata = rangeconv_off((range_t) {target, seg->fileoff, seg->filesize}, MUST_FIND).start;
                         fixup_stub_helpers(hdr->cputype, segdata + sect->offset - seg->fileoff, sect->size, *li[0].moveme[MM_LAZY_BIND].size);
@@ -620,8 +619,14 @@ void b_inject_macho_binary(struct binary *target, const struct binary *binary, a
         uint32_t newsize = 0;
         for(int i = 0; i < NMOVEME; i++) {
             for(int l = 0; l < 2; l++) {
-                if(li[l].moveme[i].off_base != -1) {
-                    newsize += *li[l].moveme[i].size * li[l].moveme[i].element_size;
+                struct moveme *m = &li[l].moveme[i];
+                if(!m->size) {
+                    static uint32_t zero = 0;
+                    m->size = m->off = &zero;
+                    m->element_size = 1;
+                }
+                if(m->off_base != -1) {
+                    newsize += *m->size * m->element_size;
                 }
             }
         }
@@ -642,9 +647,12 @@ void b_inject_macho_binary(struct binary *target, const struct binary *binary, a
                         m->copied_from = li[l].moveme[m->off_base].copied_from + *m->off * m->element_size;
                     } else {
                         // the value is a file offset
+                        // if 0, just plain copy; if -1, the references will handle copying
                         m->copied_from = li[l].linkedit_ptr - li[l].linkedit_range.start + *m->off;
                     }
-                    if(m->off_base != -1) memcpy(m->copied_to, m->copied_from, m->copied_size);
+                    if(m->off_base != -1) {
+                        memcpy(m->copied_to, m->copied_from, m->copied_size);
+                    }
                     s += m->copied_size;
                 }
                 //printf("i=%d s=%u off=%u\n", i, s, off);
@@ -656,20 +664,39 @@ void b_inject_macho_binary(struct binary *target, const struct binary *binary, a
                 }
                 *m->size = s / m->element_size;
 
-                if(m->off_base != -1) off += s;
+                if(m->off_base != -1) {
+                    off += s;
+                }
             }
 
             // update struct references (which are out of order, yay)
             off = 0;
-            for(int i = MM_LOCREL; i <= MM_INDIRECT; i++) {
-                if(moveref[i].target_start) {
-                    struct moveme *restrict m = &li[1].moveme[i];
+            for(int i = 0; i < 2; i++) {
+                for(int j = MM_LOCREL; j <= MM_INDIRECT; j++) {
+                    int k = moveref[j].target;
+                    if(!k) continue;
+
+                    struct moveme *m = &li[i].moveme[j];
                     for(void *ptr = m->copied_to; ptr < m->copied_to + m->copied_size; ptr += m->element_size) {
                         uint32_t diff = 0;
-                        for(int j = moveref[i].target_start; j <= moveref[i].target_end; j++) {
-                            diff += *li[0].moveme[j].size;
+                        int b = li[i].moveme[k].off_base;
+                        if(b > 0) {
+                            //    A1 A2 B1 B2 C1 C2
+                            // 0: <--------->
+                            // 1: <------------>
+                            int orig_off = (li[i].moveme[k].copied_from - li[i].moveme[b].copied_from) / li[i].moveme[k].element_size;
+                            int new_off = (li[i].moveme[k].copied_to - li[0].moveme[b].copied_to) / li[i].moveme[k].element_size;
+                            diff = new_off - orig_off;
+                        } else {
+                            //    A   B
+                            // 0: 
+                            // 1: <->
+                            if(i == 1) {
+                                diff = li[0].moveme[k].copied_size / li[0].moveme[k].element_size;
+                            }
                         }
-                        uint32_t *p = ptr + moveref[i].offset;
+
+                        uint32_t *p = ptr + moveref[j].offset;
                         if(*p < 0x10000000) *p += diff;
                     }
                 }

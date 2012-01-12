@@ -76,9 +76,30 @@ void b_copy_syms(const struct binary *binary, struct data_sym **syms, uint32_t *
 void b_store(struct binary *binary, const char *path);
 #define b_macho_store b_store
 
+static inline uint8_t b_pointer_size(const struct binary *binary) {
+    return sizeof(addr_t) == 4 ? 4 : binary->pointer_size;
+}
+
+__attribute__((const))
+static inline addr_t read_pointer(const void *ptr, int pointer_size) {
+    if(pointer_size == 4) {
+        return *((uint32_t *) ptr);
+    } else {
+        return *((uint64_t *) ptr);
+    }
+}
+
+static inline void write_pointer(void *ptr, addr_t value, int pointer_size) {
+    if(pointer_size == 4) {
+        *((uint32_t *) ptr) = value;
+    } else {
+        *((uint64_t *) ptr) = value;
+    }
+}
+
 __END_DECLS
 
-
+// b_read32, etc.
 #define r(sz) \
 static inline uint##sz##_t b_read##sz(const struct binary *binary, addr_t addr) { \
     return *(uint##sz##_t *)(rangeconv((range_t) {binary, addr, sz/8}, MUST_FIND).start); \
@@ -88,3 +109,4 @@ r(8)
 r(16)
 r(32)
 r(64)
+

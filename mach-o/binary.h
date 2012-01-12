@@ -46,8 +46,6 @@ struct nlist *b_macho_nth_symbol(const struct binary *binary, uint32_t n);
 
 addr_t b_macho_reloc_base(const struct binary *binary);
 
-#define b_pointer_size(binary) (sizeof(addr_t) == 4 ? (uint8_t) 4 : (binary)->pointer_size)
-
 const char *convert_lc_str(const struct load_command *cmd, uint32_t offset);
 
 __END_DECLS
