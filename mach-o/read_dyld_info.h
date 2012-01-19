@@ -2,10 +2,10 @@
 #include <stdint.h>
 // ld64
 static addr_t read_xleb128(void **ptr, void *end, bool is_signed) {
-    uint32_t result = 0;
+    addr_t result = 0;
     uint8_t *p = *ptr;
     uint8_t bit;
-    int shift = 0;
+    unsigned int shift = 0;
     do {
         if(p >= (uint8_t *) end) die("uleb128 overrun");
         bit = *p++;
@@ -14,7 +14,9 @@ static addr_t read_xleb128(void **ptr, void *end, bool is_signed) {
         // the argument is a lie, it's actually 64 bits of fff, which overflows here
         // it should just be sleb, but ...
         //if(shift >= 8*sizeof(addr_t) || ((k << shift) >> shift) != k) die("uleb128 too big");
-        result |= k << shift;
+        if(shift < sizeof(addr_t) * 8) {
+            result |= k << shift;
+        }
         shift += 7;
     } while(bit & 0x80);
     if(is_signed && (bit & 0x40)) {

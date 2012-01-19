@@ -55,10 +55,10 @@ else
 LDID =
 endif
 
-$(OUTDIR)/%.o: %.c *.h
+$(OUTDIR)/%.o: %.c *.h $(dir %)/*.h
 	$(GCC) -c -o $@ $<
 
-$(OUTDIR)/%.o: %.cpp *.h
+$(OUTDIR)/%.o: %.cpp *.h $(dir %)/*.h
 	$(GXX) -c -o $@ $<
 
 .clean:

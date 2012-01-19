@@ -6,16 +6,13 @@
 #include <ctype.h>
 #include "read_dyld_info.h"
 
-static addr_t lookup_nth_symbol(const struct binary *load, const struct binary *target, lookupsym_t lookup_sym, uint32_t symbolnum, bool userland) {
-    struct nlist *nl = b_macho_nth_symbol(load, symbolnum);
-    bool weak = nl->n_desc & N_WEAK_REF;
-    const char *name = load->mach->strtab + nl->n_un.n_strx;
-    addr_t sym = lookup_sym(target, name);
+static addr_t lookup_symbol_or_do_stuff(lookupsym_t lookup_sym, void *context, const char *name, bool weak, bool userland) {
+    addr_t sym = lookup_sym(context, name);
     if(!sym) {
-        if(!strcmp(name, "dyld_stub_binder")) {
-            sym = 0xdeadbeef;
-        } else if(userland) {
+        if(userland) {
             // let it pass
+        } else if(!strcmp(name, "dyld_stub_binder")) {
+            sym = 0xdeadbeef;
         } else if(weak) {
             fprintf(stderr, "lookup_nth_symbol: warning: couldn't find weak symbol %s\n", name);
         } else {
@@ -25,7 +22,14 @@ static addr_t lookup_nth_symbol(const struct binary *load, const struct binary *
     return sym;
 }
 
-static void relocate_area(const struct binary *load, const struct binary *target, enum reloc_mode mode, lookupsym_t lookup_sym, addr_t slide, uint32_t reloff, uint32_t nreloc) {
+static addr_t lookup_nth_symbol(const struct binary *load, uint32_t symbolnum, lookupsym_t lookup_sym, void *context, bool userland) {
+    struct nlist *nl = b_macho_nth_symbol(load, symbolnum);
+    bool weak = nl->n_desc & N_WEAK_REF;
+    const char *name = load->mach->strtab + nl->n_un.n_strx;
+    return lookup_symbol_or_do_stuff(lookup_sym, context, name, weak, userland);
+}
+
+static void relocate_area(struct binary *load, uint32_t reloff, uint32_t nreloc, enum reloc_mode mode, lookupsym_t lookup_sym, void *context, addr_t slide) {
     struct relocation_info *things = rangeconv_off((range_t) {load, reloff, nreloc * sizeof(struct relocation_info)}, MUST_FIND).start;
     for(uint32_t i = 0; i < nreloc; i++) {
         if(things[i].r_length != 2) {
@@ -39,7 +43,7 @@ static void relocate_area(const struct binary *load, const struct binary *target
         addr_t value;
         if(things[i].r_extern) {
             if(mode == RELOC_LOCAL_ONLY) continue;
-            value = lookup_nth_symbol(load, target, lookup_sym, things[i].r_symbolnum, mode == RELOC_USERLAND);
+            value = lookup_nth_symbol(load, things[i].r_symbolnum, lookup_sym, context, mode == RELOC_USERLAND);
             if(value == 0 && mode == RELOC_USERLAND) continue;
         } else {
             if(mode == RELOC_EXTERN_ONLY || mode == RELOC_USERLAND) continue;
@@ -92,12 +96,12 @@ static void relocate_area(const struct binary *load, const struct binary *target
     }
 }
 
-static void relocate_with_symtab(struct binary *load, const struct binary *target, enum reloc_mode mode, lookupsym_t lookup_sym, addr_t slide) {
+static void relocate_with_symtab(struct binary *load, enum reloc_mode mode, lookupsym_t lookup_sym, void *context, addr_t slide) {
     if(mode != RELOC_EXTERN_ONLY && mode != RELOC_USERLAND) {
-        relocate_area(load, target, mode, lookup_sym, slide, load->mach->dysymtab->locreloff, load->mach->dysymtab->nlocrel);
+        relocate_area(load, load->mach->dysymtab->locreloff, load->mach->dysymtab->nlocrel, mode, lookup_sym, context, slide);
     }
     if(mode != RELOC_LOCAL_ONLY) {
-        relocate_area(load, target, mode, lookup_sym, slide, load->mach->dysymtab->extreloff, load->mach->dysymtab->nextrel);
+        relocate_area(load, load->mach->dysymtab->extreloff, load->mach->dysymtab->nextrel, mode, lookup_sym, context, slide);
     }
 
     uint8_t pointer_size = b_pointer_size(load);
@@ -143,7 +147,7 @@ static void relocate_with_symtab(struct binary *load, const struct binary *targe
                             continue;
                         default:
                             if(mode == RELOC_LOCAL_ONLY) continue;
-                            found_addr = lookup_nth_symbol(load, target, lookup_sym, *indirect_syms, mode == RELOC_USERLAND);
+                            found_addr = lookup_nth_symbol(load, *indirect_syms, lookup_sym, context, mode == RELOC_USERLAND);
                             if(!found_addr && mode == RELOC_USERLAND) {
                                 // don't set to ABS! 
                                 continue;
@@ -173,14 +177,14 @@ static void relocate_with_symtab(struct binary *load, const struct binary *targe
                     }
                 }
                 
-                relocate_area(load, target, mode, lookup_sym, slide, sect->reloff, sect->nreloc);
+                relocate_area(load, sect->reloff, sect->nreloc, mode, lookup_sym, context, slide);
             }
         }
     }
 
 }
 
-static void do_bind_section(struct binary *load, const struct binary *target, bool weak, lookupsym_t lookup_sym, prange_t opcodes) {
+static void do_bind_section(prange_t opcodes, struct binary *load, bool weak, bool userland, lookupsym_t lookup_sym, void *context) {
     uint8_t pointer_size = b_pointer_size(load);
 
     uint8_t symbol_flags;
@@ -228,7 +232,10 @@ static void do_bind_section(struct binary *load, const struct binary *target, bo
             offset = read_uleb128(&ptr, end);
             break;
         case BIND_OPCODE_ADD_ADDR_ULEB:
-            offset += read_uleb128(&ptr, end);
+            {
+            addr_t o = read_uleb128(&ptr, end);
+            offset += o;
+            }
             break;
         case BIND_OPCODE_DO_BIND:
             count = 1;
@@ -244,22 +251,18 @@ static void do_bind_section(struct binary *load, const struct binary *target, bo
             goto bind;
         case BIND_OPCODE_DO_BIND_ULEB_TIMES_SKIPPING_ULEB:
             count = read_uleb128(&ptr, end);
-            stride = read_uleb128(&ptr, end);
+            stride = read_uleb128(&ptr, end) + pointer_size;
             goto bind;
         bind: {
             if(!sym || !segment.start) die("improper bind");
             bool _64b;
             addr_t value;
-            value = lookup_sym(target, sym);
+
+
+            value = lookup_symbol_or_do_stuff(lookup_sym, context, sym, weak, userland);
             if(!value) {
-                if(!strcmp(sym, "dyld_stub_binder")) {
-                    value = 0xdeadbeef;
-                } else if(weak) {
-                    offset += stride * count;
-                    break;
-                } else {
-                    die("no such symbol %s", sym);
-                }
+                offset += stride * count;
+                break;
             }
             value += addend;
             switch(type) {
@@ -352,7 +355,7 @@ static void do_rebase(struct binary *load, prange_t opcodes, addr_t slide) {
             goto rebase;
         case REBASE_OPCODE_DO_REBASE_ULEB_TIMES_SKIPPING_ULEB:
             count = read_uleb128(&ptr, end);
-            stride = read_uleb128(&ptr, end);
+            stride = read_uleb128(&ptr, end) + pointer_size;
             goto rebase;
         rebase: {
             bool _64b;
@@ -394,7 +397,7 @@ static void do_rebase(struct binary *load, prange_t opcodes, addr_t slide) {
     }
 }
 
-static void relocate_with_dyld_info(struct binary *load, const struct binary *target, enum reloc_mode mode, lookupsym_t lookup_sym, addr_t slide) {
+static void relocate_with_dyld_info(struct binary *load, enum reloc_mode mode, lookupsym_t lookup_sym, void *context, addr_t slide) {
     // It gets more complicated
     struct dyld_info_command *dyld_info = load->mach->dyld_info;
     #define fetch(type) prange_t type = dyld_info->type##_off ? rangeconv_off((range_t) {load, dyld_info->type##_off, dyld_info->type##_size}, MUST_FIND) : (prange_t) {NULL, 0};
@@ -409,13 +412,14 @@ static void relocate_with_dyld_info(struct binary *load, const struct binary *ta
         fetch(bind)
         fetch(weak_bind)
         fetch(lazy_bind)
-        do_bind_section(load, target, mode == RELOC_USERLAND, lookup_sym, lazy_bind);
-        do_bind_section(load, target, true, lookup_sym, weak_bind);
-        do_bind_section(load, target, mode == RELOC_USERLAND, lookup_sym, bind);
+        bool userland = mode == RELOC_USERLAND;
+        do_bind_section(bind, load, userland, userland, lookup_sym, context);
+        do_bind_section(weak_bind, load, true, userland, lookup_sym, context);
+        do_bind_section(lazy_bind, load, userland, userland, lookup_sym, context);
     }
 }
 
-void b_relocate(struct binary *load, const struct binary *target, enum reloc_mode mode, lookupsym_t lookup_sym, addr_t slide) {
+void b_relocate(struct binary *load, const struct binary *target, enum reloc_mode mode, lookupsym_t lookup_sym, void *context, addr_t slide) {
     if(mode == RELOC_USERLAND && slide != 0) {
         die("sliding is not supported in userland mode");
     }
@@ -425,18 +429,20 @@ void b_relocate(struct binary *load, const struct binary *target, enum reloc_mod
     }
 
     // check for overlap
-    for(uint32_t i = 0; i < load->nsegments; i++) {
-        struct data_segment *a = &load->segments[i];
-        for(uint32_t j = 0; j < target->nsegments; j++) {
-            struct data_segment *b = &target->segments[j];
-            addr_t diff = b->vm_range.start - (a->vm_range.start + slide);
-            if(diff < a->vm_range.size || -diff < b->vm_range.size) {
-                die("segments of load and target overlap; load:%x+%zu target:%x+%zu", a->vm_range.start, a->vm_range.size, b->vm_range.start, b->vm_range.size);
+    if(target) {
+        for(uint32_t i = 0; i < load->nsegments; i++) {
+            struct data_segment *a = &load->segments[i];
+            for(uint32_t j = 0; j < target->nsegments; j++) {
+                struct data_segment *b = &target->segments[j];
+                addr_t diff = b->vm_range.start - (a->vm_range.start + slide);
+                if(diff < a->vm_range.size || -diff < b->vm_range.size) {
+                    die("segments of load and target overlap; load:%x+%zu target:%x+%zu", a->vm_range.start, a->vm_range.size, b->vm_range.start, b->vm_range.size);
+                }
             }
         }
     }
     
-    (load->mach->dyld_info ? relocate_with_dyld_info : relocate_with_symtab)(load, target, mode, lookup_sym, slide);
+    (load->mach->dyld_info ? relocate_with_dyld_info : relocate_with_symtab)(load, mode, lookup_sym, context, slide);
     
     if(mode != RELOC_EXTERN_ONLY && slide != 0) {
         CMD_ITERATE(b_mach_hdr(load), cmd) {
