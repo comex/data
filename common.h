@@ -42,7 +42,12 @@ __unused static const char *const _arg = (char *) MAP_FAILED;
 #define edie(fmt, args...) die(fmt ": %s", ##args, strerror(errno))
 
 struct binary;
+#define ADDR64 1
+#if ADDR64
+typedef uint64_t addr_t;
+#else
 typedef uint32_t addr_t;
+#endif
 typedef struct { const struct binary *binary; addr_t start; size_t size; } range_t;
 typedef struct { addr_t start; size_t size; } arange_t;
 typedef struct { void *start; size_t size; } prange_t;

@@ -7,8 +7,6 @@
 #include "mach-o/headers/nlist.h"
 #include <mach/mach.h>
 #include <assert.h>
-extern host_priv_t host_priv_self();
-// copied from xnu
 
 struct proc;
 typedef int32_t sy_call_t(struct proc *, void *, int *);
@@ -304,7 +302,7 @@ void b_running_kernel_load_macho(struct binary *binary) {
             size = 0xfff;
             kr_assert(vm_read_overwrite(kernel_task, (vm_address_t) mh_addr, size, (vm_address_t) hdr_buf, &size));
             if(hdr->magic == MH_MAGIC) {
-                printf("found running kernel at 0x%08x\n", mh_addr);
+                printf("found running kernel at 0x%08llx\n", (long long) mh_addr);
                 goto ok;
             }
         }

@@ -28,10 +28,12 @@ static void do_load_commands(struct binary *binary) {
         }
         uint32_t required = 0;
         switch(cmd->cmd) {
-        case LC_SEGMENT:
-            required = sizeof(struct segment_command);
-            nsegs++;
-            break;
+        MACHO_SPECIALIZE(
+            case LC_SEGMENT_X:
+                required = sizeof(segment_command_x);
+                nsegs++;
+                break;
+        )
         case LC_REEXPORT_DYLIB:
             required = sizeof(struct dylib_command);
             break;
@@ -60,37 +62,45 @@ static void do_load_commands(struct binary *binary) {
     binary->nsegments = nsegs;
     struct data_segment *seg = binary->segments = malloc(sizeof(*binary->segments) * binary->nsegments);
     CMD_ITERATE(hdr, cmd) {
-        if(cmd->cmd == LC_SEGMENT) {
-            struct segment_command *scmd = (void *) cmd;
-            if(scmd->nsects > MAX_ARRAY(struct section) || scmd->cmdsize < sizeof(*scmd) + scmd->nsects * sizeof(struct section)) {
-                die("section overflow");
+        switch(cmd->cmd) {
+        MACHO_SPECIALIZE(
+            case LC_SEGMENT_X: {
+                segment_command_x *scmd = (void *) cmd;
+                if((scmd->cmdsize - sizeof(*scmd)) / sizeof(section_x) < scmd->nsects) {
+                    die("section overflow");
+                }
+                seg->file_range = (range_t) {binary, scmd->fileoff, scmd->filesize};
+                seg->vm_range = (range_t) {binary, scmd->vmaddr, scmd->vmsize};
+                seg->native_segment = cmd;
+                seg++;
+                break;
             }
-            seg->file_range = (range_t) {binary, scmd->fileoff, scmd->filesize};
-            seg->vm_range = (range_t) {binary, scmd->vmaddr, scmd->vmsize};
-            seg->native_segment = cmd;
-            seg++;
+        )
         }
     }
 }
 
 static void do_symbols(struct binary *binary) {
     binary->mach = calloc(sizeof(*binary->mach), 1);
-    binary->mach->hdr= b_mach_hdr(binary);
+    binary->mach->hdr = b_mach_hdr(binary);
 
     CMD_ITERATE(b_mach_hdr(binary), cmd) {
-        if(cmd->cmd == LC_SEGMENT) {
-            struct segment_command *seg = (void *) cmd;
-            if(seg->fileoff == 0) {
-                binary->mach->export_baseaddr = seg->vmaddr;
+        MACHO_SPECIALIZE(
+            if(cmd->cmd == LC_SEGMENT_X) {
+                segment_command_x *seg = (void *) cmd;
+                if(seg->fileoff == 0) {
+                    binary->mach->export_baseaddr = seg->vmaddr;
+                }
             }
-        } else if(cmd->cmd == LC_SYMTAB) {
+        )
+        if(cmd->cmd == LC_SYMTAB) {
             struct symtab_command *scmd = (void *) cmd;
-            if(scmd->nsyms > MAX_ARRAY(struct data_sym) || scmd->nsyms > MAX_ARRAY(struct nlist)) {
+            if(scmd->nsyms > MAX_ARRAY(struct data_sym) || scmd->nsyms > MAX_ARRAY(struct nlist_64)) {
                 die("ridiculous number of symbols (%u)", scmd->nsyms);
             }
             binary->mach->nsyms = scmd->nsyms;
             binary->mach->strsize = scmd->strsize;
-            binary->mach->symtab = rangeconv_off((range_t) {binary, scmd->symoff, scmd->nsyms * sizeof(struct nlist)}, MUST_FIND).start;
+            binary->mach->symtab = rangeconv_off((range_t) {binary, scmd->symoff, scmd->nsyms * (b_pointer_size(binary) == 8 ? sizeof(struct nlist_64) : sizeof(struct nlist))}, MUST_FIND).start;
             binary->mach->strtab = rangeconv_off((range_t) {binary, scmd->stroff, scmd->strsize}, MUST_FIND).start;
             if(binary->mach->strtab[binary->mach->strsize - 1]) {
                 die("string table does not end with \\0");
@@ -105,9 +115,11 @@ static void do_symbols(struct binary *binary) {
     }
     const struct dysymtab_command *dc;
     if(binary->mach->symtab && (dc = binary->mach->dysymtab)) {
+        size_t size;
+        MACHO_SPECIALIZE_POINTER_SIZE(binary, size = sizeof(nlist_x);)
 #define do_it(isym, nsym, x_symtab, x_nsyms) \
-        if(dc->isym <= binary->mach->nsyms && dc->nsym <= binary->mach->nsyms - dc->isym && dc->nsym <= MAX_ARRAY(struct nlist) && dc->nsym <= MAX_ARRAY(struct data_sym)) { \
-            binary->mach->x_symtab = binary->mach->symtab + dc->isym; \
+        if(dc->isym <= binary->mach->nsyms && dc->nsym <= binary->mach->nsyms - dc->isym && dc->nsym <= MAX_ARRAY(struct nlist_64) && dc->nsym <= MAX_ARRAY(struct data_sym)) { \
+            binary->mach->x_symtab = binary->mach->symtab + dc->isym * size; \
             binary->mach->x_nsyms = dc->nsym; \
         } else { \
             fprintf(stderr, "warning: bad %s/%s (%u, %u)\n", #isym, #nsym, dc->isym, dc->nsym); \
@@ -131,7 +143,6 @@ void b_prange_load_macho(struct binary *binary, prange_t pr, size_t offset, cons
 void b_prange_load_macho_nosyms(struct binary *binary, prange_t pr, size_t offset, const char *name) {
 #define _arg name
     binary->valid = true;
-    binary->pointer_size = 4;
 
     binary->header_offset = offset;
 
@@ -143,6 +154,10 @@ void b_prange_load_macho_nosyms(struct binary *binary, prange_t pr, size_t offse
     if(hdr->magic == MH_MAGIC) {
         // thin file
         binary->valid_range = pr;
+        binary->pointer_size = 4;
+    } else if(ADDR64 && hdr->magic == MH_MAGIC_64) {
+        binary->valid_range = pr;
+        binary->pointer_size = 8;
     } else if(hdr->magic == FAT_CIGAM) {
         if(offset) die("fat, offset != 0");
 
@@ -179,7 +194,7 @@ void b_prange_load_macho_nosyms(struct binary *binary, prange_t pr, size_t offse
         }
 
         binary->valid_range = fat_pr;
-    } else if(hdr->magic == MH_CIGAM || hdr->magic == FAT_MAGIC) {
+    } else if(hdr->magic == MH_CIGAM || hdr->magic == MH_CIGAM_64 || hdr->magic == FAT_MAGIC) {
         die("wrong endian");
     } else {
         die("(%08x) what is this I don't even", hdr->magic);
@@ -192,32 +207,37 @@ void b_prange_load_macho_nosyms(struct binary *binary, prange_t pr, size_t offse
 #undef _arg
 }
 
-static inline struct data_sym convert_nlist(const struct binary *binary, const struct nlist *nl, int options) {
+static inline struct data_sym convert_nlist(const struct binary *binary, const void *nl_, int options) {
     struct data_sym result;
-    uint32_t strx = (uint32_t) nl->n_un.n_strx;
-    if(strx >= binary->mach->strsize) {
-        die("insane strx: %u", strx);
-    }
-    result.name = binary->mach->strtab + strx;
-    result.address = nl->n_value;
-    if((options & TO_EXECUTE) && (nl->n_desc & N_ARM_THUMB_DEF)) {
-        result.address |= 1;
-    }
+    MACHO_SPECIALIZE_POINTER_SIZE(binary,
+        const nlist_x *nl = nl_;
+        uint32_t strx = nl->n_un.n_strx;
+        if(strx >= binary->mach->strsize) {
+            die("insane strx: %u", strx);
+        }
+        result.name = binary->mach->strtab + strx;
+        result.address = nl->n_value;
+        if((options & TO_EXECUTE) && (nl->n_desc & N_ARM_THUMB_DEF)) {
+            result.address |= 1;
+        }
+    )
     return result;
 }
 
-struct nlist *b_macho_nth_symbol(const struct binary *binary, uint32_t n) {
+void *b_macho_nth_symbol(const struct binary *binary, uint32_t n) {
     if(!binary->mach->symtab) {
         die("no symbol table");
     }
     if(n >= binary->mach->nsyms) {
         die("sym too high: %u", sym);
     }
-    struct nlist *nl = binary->mach->symtab + n;
-    if((uint32_t) nl->n_un.n_strx >= binary->mach->strsize) {
-        die("insane strx: %d", (int) nl->n_un.n_strx);
-    }
-    return nl;
+    MACHO_SPECIALIZE_POINTER_SIZE(binary,
+        nlist_x *nl = binary->mach->symtab + n * sizeof(*nl);
+        if((uint32_t) nl->n_un.n_strx >= binary->mach->strsize) {
+            die("insane strx: %d", (int) nl->n_un.n_strx);
+        }
+        return nl;
+    )
 }
 
 
@@ -312,38 +332,42 @@ static addr_t sym_private(const struct binary *binary, const char *name, int opt
     if(!binary->mach->symtab) {
         die("we wanted %s but there is no symbol table", name);
     }
-    const struct nlist *base = binary->mach->symtab;
-    for(uint32_t i = 0; i < binary->mach->nsyms; i++) {
-        struct data_sym ds = convert_nlist(binary, base + i, options);
-        if(!strcmp(ds.name, name)) return ds.address;
-    }
+    MACHO_SPECIALIZE_POINTER_SIZE(binary,
+        const nlist_x *base = binary->mach->symtab;
+        for(uint32_t i = 0; i < binary->mach->nsyms; i++) {
+            struct data_sym ds = convert_nlist(binary, base + i, options);
+            if(!strcmp(ds.name, name)) return ds.address;
+        }
+    )
     return 0;
 }
+
 
 static addr_t sym_imported(const struct binary *binary, const char *name, __unused int options) {
     // most of this function is copied and pasted from link.c :$
     CMD_ITERATE(b_mach_hdr(binary), cmd) {
-        if(cmd->cmd == LC_SEGMENT) {
-            struct segment_command *seg = (void *) cmd;
-            struct section *sections = (void *) (seg + 1);
-            for(uint32_t i = 0; i < seg->nsects; i++) {
-                struct section *sect = &sections[i];
-                uint8_t type = sect->flags & SECTION_TYPE;
-                if(type != S_NON_LAZY_SYMBOL_POINTERS && type != S_LAZY_SYMBOL_POINTERS) continue;
+        MACHO_SPECIALIZE(
+            if(cmd->cmd == LC_SEGMENT_X) {
+                segment_command_x *seg = (void *) cmd;
+                section_x *sect = (void *) (seg + 1);
+                for(uint32_t i = 0; i < seg->nsects; i++, sect++) {
+                    uint8_t type = sect->flags & SECTION_TYPE;
+                    if(type != S_NON_LAZY_SYMBOL_POINTERS && type != S_LAZY_SYMBOL_POINTERS) continue;
 
-                uint32_t indirect_table_offset = sect->reserved1;
-                uint32_t *indirect = rangeconv_off((range_t) {binary, (addr_t) (binary->mach->dysymtab->indirectsymoff + indirect_table_offset*sizeof(uint32_t)), (sect->size / 4) * sizeof(uint32_t)}, MUST_FIND).start;
-                
-                for(uint32_t i = 0; i < sect->size / 4; i++) {
-                    uint32_t sym = indirect[i];
-                    if(sym == INDIRECT_SYMBOL_LOCAL || sym == INDIRECT_SYMBOL_ABS) continue;
-                    struct nlist *nl = b_macho_nth_symbol(binary, sym);
-                    if(!strcmp(binary->mach->strtab + nl->n_un.n_strx, name)) {
-                        return sect->addr + 4*i;
+                    uint32_t indirect_table_offset = sect->reserved1;
+                    uint32_t *indirect = rangeconv_off((range_t) {binary, (addr_t) (binary->mach->dysymtab->indirectsymoff + indirect_table_offset*sizeof(uint32_t)), (sect->size / 4) * sizeof(uint32_t)}, MUST_FIND).start;
+                    
+                    for(uint32_t i = 0; i < sect->size / 4; i++) {
+                        uint32_t sym = indirect[i];
+                        if(sym == INDIRECT_SYMBOL_LOCAL || sym == INDIRECT_SYMBOL_ABS) continue;
+                        nlist_x *nl = b_macho_nth_symbol(binary, sym);
+                        if(!strcmp(binary->mach->strtab + nl->n_un.n_strx, name)) {
+                            return sect->addr + 4*i;
+                        }
                     }
                 }
             }
-        }
+        )
     }
     return 0;
 }
@@ -363,7 +387,9 @@ static addr_t sym(const struct binary *binary, const char *name, int options) {
 
 static void copy_syms(const struct binary *binary, struct data_sym **syms, uint32_t *nsyms, int options) {
     uint32_t n;
-    const struct nlist *nl;
+    const void *nl;
+    size_t size;
+    MACHO_SPECIALIZE_POINTER_SIZE(binary, size = sizeof(nlist_x);)
     bool can_be_zero = false;
     if(options & PRIVATE_SYM) {
         nl = binary->mach->symtab;
@@ -378,7 +404,8 @@ static void copy_syms(const struct binary *binary, struct data_sym **syms, uint3
     }
     struct data_sym *s = *syms = malloc(sizeof(struct data_sym) * n);
     for(uint32_t i = 0; i < n; i++) {
-        *s = convert_nlist(binary, nl++, options);
+        *s = convert_nlist(binary, nl, options);
+        nl += size;
         if(can_be_zero || s->address) s++;
     }
     *nsyms = s - *syms;
@@ -386,29 +413,33 @@ static void copy_syms(const struct binary *binary, struct data_sym **syms, uint3
 
 range_t b_macho_segrange(const struct binary *binary, const char *segname) {
     CMD_ITERATE(b_mach_hdr(binary), cmd) {
-        if(cmd->cmd == LC_SEGMENT) {
-            struct segment_command *seg = (void *) cmd;
-            if(!strncmp(seg->segname, segname, 16)) {
-                return (range_t) {binary, seg->vmaddr, seg->filesize};
+        MACHO_SPECIALIZE(
+            if(cmd->cmd == LC_SEGMENT_X) {
+                segment_command_x *seg = (void *) cmd;
+                if(!strncmp(seg->segname, segname, 16)) {
+                    return (range_t) {binary, seg->vmaddr, seg->filesize};
+                }
             }
-        }
+        )
     }
     die("no such segment %s", segname);
 }
 
 range_t b_macho_sectrange(const struct binary *binary, const char *segname, const char *sectname) {
     CMD_ITERATE(b_mach_hdr(binary), cmd) {
-        if(cmd->cmd == LC_SEGMENT) {
-            struct segment_command *seg = (void *) cmd;
-            if(!strncmp(seg->segname, segname, 16)) {
-                struct section *sect = (void *) (seg + 1);
-                for(uint32_t i = 0; i < seg->nsects; i++) {
-                    if(!strncmp(sect[i].sectname, sectname, 16)) {
-                        return (range_t) {binary, sect->addr, sect->size};
+        MACHO_SPECIALIZE(
+            if(cmd->cmd == LC_SEGMENT_X) {
+                segment_command_x *seg = (void *) cmd;
+                if(!strncmp(seg->segname, segname, 16)) {
+                    section_x *sect = (void *) (seg + 1);
+                    for(uint32_t i = 0; i < seg->nsects; i++) {
+                        if(!strncmp(sect[i].sectname, sectname, 16)) {
+                            return (range_t) {binary, sect->addr, sect->size};
+                        }
                     }
                 }
             }
-        }
+        )
     }
     die("no such segment %s", segname);
 }
@@ -420,12 +451,14 @@ void b_load_macho(struct binary *binary, const char *filename) {
 addr_t b_macho_reloc_base(const struct binary *binary) {
     // copying dyld's behavior
     CMD_ITERATE(b_mach_hdr(binary), cmd) {
-        if(cmd->cmd == LC_SEGMENT) {
-            struct segment_command *seg = (void *) cmd;
-            if(b_mach_hdr(binary)->cputype != CPU_TYPE_X86_64 || (seg->initprot & PROT_WRITE)) {
-                return seg->vmaddr;
+        MACHO_SPECIALIZE(
+            if(cmd->cmd == LC_SEGMENT_X) {
+                segment_command_x *seg = (void *) cmd;
+                if(b_mach_hdr(binary)->cputype != CPU_TYPE_X86_64 || (seg->initprot & PROT_WRITE)) {
+                    return seg->vmaddr;
+                }
             }
-        }
+        )
     }
     die("no segments");
 }

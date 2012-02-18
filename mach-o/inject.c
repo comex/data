@@ -558,7 +558,7 @@ void b_inject_macho_binary(struct binary *target, const struct binary *binary, a
         uint32_t bytes_to_move = 12; // don't cut the MRC in two!
 
         addr_t hack_func = find_hack_func(target);
-        fprintf(stderr, "hack_func = %08x\n", hack_func);
+        fprintf(stderr, "hack_func = %08llx\n", (long long) hack_func);
         prange_t hack_func_pr = rangeconv((range_t) {target, hack_func & ~1, bytes_to_move}, MUST_FIND);
 
         // allocate a new segment for the stub

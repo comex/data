@@ -96,6 +96,73 @@ static void relocate_area(struct binary *load, uint32_t reloff, uint32_t nreloc,
     }
 }
 
+static void go_indirect(struct binary *load, uint32_t offset, uint32_t size, uint32_t flags, uint32_t reserved1, uint32_t reserved2, enum reloc_mode mode, lookupsym_t lookup_sym, void *context, addr_t slide) {
+    uint8_t type = flags & SECTION_TYPE;
+    uint8_t pointer_size = b_pointer_size(load);
+    switch(type) {
+    case S_NON_LAZY_SYMBOL_POINTERS:
+    case S_LAZY_SYMBOL_POINTERS: {
+        uint32_t indirect_table_offset = reserved1;
+        const struct dysymtab_command *dysymtab = load->mach->dysymtab;
+        
+
+        uint32_t stride = type == S_SYMBOL_STUBS ? reserved2 : pointer_size;
+        uint32_t num_syms = size / stride;
+
+        if(stride < pointer_size ||
+           num_syms * stride != size ||
+           dysymtab->nindirectsyms > ((addr_t) -(dysymtab->indirectsymoff - 1)) / sizeof(uint32_t) ||
+           indirect_table_offset > dysymtab->nindirectsyms ||
+           num_syms > dysymtab->nindirectsyms - indirect_table_offset) {
+           die("bad indirect section");
+        }
+        
+        uint32_t *indirect_syms = rangeconv_off((range_t) {load, (addr_t) dysymtab->indirectsymoff + indirect_table_offset * sizeof(uint32_t), num_syms * sizeof(uint32_t)}, MUST_FIND).start;
+        void *addrs = rangeconv_off((range_t) {load, offset, size}, MUST_FIND).start;
+        for(uint32_t i = 0; i < num_syms; i++, indirect_syms++, addrs += stride) {
+            addr_t addr, found_addr;
+
+            switch(*indirect_syms) {
+            case INDIRECT_SYMBOL_LOCAL:
+                if(mode == RELOC_EXTERN_ONLY || mode == RELOC_USERLAND) continue;
+                addr = read_pointer(addrs, pointer_size) + slide;
+                break;
+            case INDIRECT_SYMBOL_ABS:
+                continue;
+            default:
+                if(mode == RELOC_LOCAL_ONLY) continue;
+                found_addr = lookup_nth_symbol(load, *indirect_syms, lookup_sym, context, mode == RELOC_USERLAND);
+                if(!found_addr && mode == RELOC_USERLAND) {
+                    // don't set to ABS! 
+                    continue;
+                }
+
+                addr = found_addr;
+                break;
+            }
+
+            write_pointer(addrs, addr, pointer_size);
+            *indirect_syms = INDIRECT_SYMBOL_ABS;
+        }
+        break;
+    }
+    case S_ZEROFILL:
+    case S_MOD_INIT_FUNC_POINTERS:
+    case S_MOD_TERM_FUNC_POINTERS:
+    case S_REGULAR:
+    case S_CSTRING_LITERALS:
+    case S_4BYTE_LITERALS:
+    case S_8BYTE_LITERALS:
+    case S_16BYTE_LITERALS:
+        break;
+    default:
+        if(mode != RELOC_USERLAND) {
+            die("unrecognized section type %02x", type);
+        }
+    }
+    
+}
+
 static void relocate_with_symtab(struct binary *load, enum reloc_mode mode, lookupsym_t lookup_sym, void *context, addr_t slide) {
     if(mode != RELOC_EXTERN_ONLY && mode != RELOC_USERLAND) {
         relocate_area(load, load->mach->dysymtab->locreloff, load->mach->dysymtab->nlocrel, mode, lookup_sym, context, slide);
@@ -104,82 +171,19 @@ static void relocate_with_symtab(struct binary *load, enum reloc_mode mode, look
         relocate_area(load, load->mach->dysymtab->extreloff, load->mach->dysymtab->nextrel, mode, lookup_sym, context, slide);
     }
 
-    uint8_t pointer_size = b_pointer_size(load);
-
     CMD_ITERATE(b_mach_hdr(load), cmd) {
-        if(cmd->cmd == LC_SEGMENT) {
-            struct segment_command *seg = (void *) cmd;
-            //printf("%.16s %08x\n", seg->segname, seg->vmaddr);
-            struct section *sections = (void *) (seg + 1);
-            for(uint32_t i = 0; i < seg->nsects; i++) {
-                struct section *sect = &sections[i];
-                //printf("   %.16s\n", sect->sectname);
-                uint8_t type = sect->flags & SECTION_TYPE;
-                switch(type) {
-                case S_NON_LAZY_SYMBOL_POINTERS:
-                case S_LAZY_SYMBOL_POINTERS: {
-                    uint32_t indirect_table_offset = sect->reserved1;
-                    const struct dysymtab_command *dysymtab = load->mach->dysymtab;
-                    
-
-                    uint32_t stride = type == S_SYMBOL_STUBS ? sect->reserved2 : pointer_size;
-                    uint32_t num_syms = sect->size / stride;
-
-                    if(stride < pointer_size ||
-                       num_syms * stride != sect->size ||
-                       dysymtab->nindirectsyms > ((addr_t) -(dysymtab->indirectsymoff - 1)) / sizeof(uint32_t) ||
-                       indirect_table_offset > dysymtab->nindirectsyms ||
-                       num_syms > dysymtab->nindirectsyms - indirect_table_offset) {
-                       die("bad indirect section");
-                    }
-                    
-                    uint32_t *indirect_syms = rangeconv_off((range_t) {load, (addr_t) dysymtab->indirectsymoff + indirect_table_offset * sizeof(uint32_t), num_syms * sizeof(uint32_t)}, MUST_FIND).start;
-                    void *addrs = rangeconv_off((range_t) {load, sect->offset, sect->size}, MUST_FIND).start;
-                    for(uint32_t i = 0; i < num_syms; i++, indirect_syms++, addrs += stride) {
-                        addr_t addr, found_addr;
-
-                        switch(*indirect_syms) {
-                        case INDIRECT_SYMBOL_LOCAL:
-                            if(mode == RELOC_EXTERN_ONLY || mode == RELOC_USERLAND) continue;
-                            addr = read_pointer(addrs, pointer_size) + slide;
-                            break;
-                        case INDIRECT_SYMBOL_ABS:
-                            continue;
-                        default:
-                            if(mode == RELOC_LOCAL_ONLY) continue;
-                            found_addr = lookup_nth_symbol(load, *indirect_syms, lookup_sym, context, mode == RELOC_USERLAND);
-                            if(!found_addr && mode == RELOC_USERLAND) {
-                                // don't set to ABS! 
-                                continue;
-                            }
-
-                            addr = found_addr;
-                            break;
-                        }
-
-                        write_pointer(addrs, addr, pointer_size);
-                        *indirect_syms = INDIRECT_SYMBOL_ABS;
-                    }
-                    break;
+        MACHO_SPECIALIZE(
+            if(cmd->cmd == LC_SEGMENT_X) {
+                segment_command_x *seg = (void *) cmd;
+                //printf("%.16s %08x\n", seg->segname, seg->vmaddr);
+                section_x *sect = (void *) (seg + 1);
+                for(uint32_t i = 0; i < seg->nsects; i++, sect++) {
+                    //printf("   %.16s\n", sect->sectname);
+                    go_indirect(load, sect->offset, sect->size, sect->flags, sect->reserved1, sect->reserved2, mode, lookup_sym, context, slide);
+                    relocate_area(load, sect->reloff, sect->nreloc, mode, lookup_sym, context, slide);
                 }
-                case S_ZEROFILL:
-                case S_MOD_INIT_FUNC_POINTERS:
-                case S_MOD_TERM_FUNC_POINTERS:
-                case S_REGULAR:
-                case S_CSTRING_LITERALS:
-                case S_4BYTE_LITERALS:
-                case S_8BYTE_LITERALS:
-                case S_16BYTE_LITERALS:
-                    break;
-                default:
-                    if(mode != RELOC_USERLAND) {
-                        die("unrecognized section type %02x", type);
-                    }
-                }
-                
-                relocate_area(load, sect->reloff, sect->nreloc, mode, lookup_sym, context, slide);
             }
-        }
+        )
     }
 
 }
@@ -446,15 +450,16 @@ void b_relocate(struct binary *load, const struct binary *target, enum reloc_mod
     
     if(mode != RELOC_EXTERN_ONLY && slide != 0) {
         CMD_ITERATE(b_mach_hdr(load), cmd) {
-            if(cmd->cmd == LC_SEGMENT) {
-                struct segment_command *seg = (void *) cmd;
-                struct section *sections = (void *) (seg + 1);
-                seg->vmaddr += slide;
-                for(uint32_t i = 0; i < seg->nsects; i++) {
-                    struct section *sect = &sections[i];
-                    sect->addr += slide;
+            MACHO_SPECIALIZE(
+                if(cmd->cmd == LC_SEGMENT_X) {
+                    segment_command_x *seg = (void *) cmd;
+                    section_x *sect = (void *) (seg + 1);
+                    seg->vmaddr += slide;
+                    for(uint32_t i = 0; i < seg->nsects; i++, sect++) {
+                        sect->addr += slide;
+                    }
                 }
-            }
+            )
         }
     }
 }
