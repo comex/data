@@ -36,8 +36,7 @@ struct mach_binary {
     struct mach_header *hdr;
 
     // this stuff is _all_ symbols...
-
-    void *symtab;
+    void *symtab; // either nlist or nlist_64
     uint32_t nsyms;
     
     // for b_sym (external stuff)
@@ -57,7 +56,7 @@ struct mach_binary {
 __BEGIN_DECLS
 
 static inline struct mach_header *b_mach_hdr(const struct binary *binary) {
-    return (struct mach_header *) (binary->valid_range.start + binary->header_offset);
+    return (struct mach_header *) ((char *) binary->valid_range.start + binary->header_offset);
 }
 
 __attribute__((pure)) range_t b_macho_segrange(const struct binary *binary, const char *segname);
