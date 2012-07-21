@@ -66,9 +66,9 @@ prange_t parse_hex_string(const char *string) {
     return result;
 }
 
-uint32_t parse_hex_uint32(const char *string) {
+addr_t parse_hex_addr(const char *string) {
     char *end;
-    uint32_t result = (uint32_t) strtoll(string, &end, 16);
+    addr_t result = (addr_t) strtoll(string, &end, 16);
     if(!*string || *end) {
         die("invalid hex value %x", string);
     }

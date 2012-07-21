@@ -65,7 +65,7 @@ prange_t load_fd(int fd, bool rw);
 
 void store_file(prange_t range, const char *filename, mode_t mode);
 
-uint32_t parse_hex_uint32(const char *string);
+addr_t parse_hex_addr(const char *string);
 
 __attribute__((noreturn)) void _die(const char *fmt, ...);
 
