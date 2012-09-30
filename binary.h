@@ -12,6 +12,7 @@
 #define EXTEND_RANGE 16
 // for find_string
 #define PRECEDING_ZERO 32
+#define TRAILING_ZERO 64
 
 struct dyld_cache_header;
 struct shared_file_mapping_np;

@@ -566,7 +566,7 @@ void b_inject_macho_binary(struct binary *target, const struct binary *binary, a
         uint32_t stub_size = (uint32_t) ((sizeof(part1) + 4) * num_init_ptrs + sizeof(part2) + bytes_to_move + sizeof(part3) + 4);
 
         if(!(hack_func & 1)) {
-            die("hack func 0x%x is not thumb", hack_func);
+            die("hack func 0x%llx is not thumb", (uint64_t) hack_func);
         }
 
         struct segment_command *newseg = ADD_COMMAND(sizeof(struct segment_command));

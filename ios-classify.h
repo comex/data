@@ -18,7 +18,7 @@ static unsigned int _50 = 3;
 
 static unsigned int classify(const struct binary *binary) {
     if(!is_armv7(binary)) return _armv6;
-    else if(b_sym(binary, "_buf_attr", 0)) return _50;
+    else if(b_sym(binary, "_mach_gss_hold_cred", 0)) return _50;
     else if(b_sym(binary, "_vfs_getattr", 0)) return _43;
     else return _armv7;
 }

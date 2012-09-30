@@ -66,7 +66,7 @@ static addr_t find_data_raw(range_t range, int16_t *buf, ssize_t pattern_size, s
                 goto keep_going; \
             } \
             if(foundit) { \
-                die("found [%s] multiple times in range: first at %08x then at %08x", name, foundit, new_match); \
+                die("found [%s] multiple times in range: first at %08llx then at %08llx", name, (uint64_t) foundit, (uint64_t) new_match); \
             } \
             foundit = new_match; \
             if(align) { \
@@ -105,7 +105,7 @@ static addr_t find_data_raw(range_t range, int16_t *buf, ssize_t pattern_size, s
     if(foundit) {
         return foundit + offset;
     } else if(options & MUST_FIND) {
-        die("didn't find [%s] in range (%x, %zx)", name, range.start, range.size);
+        die("didn't find [%s] in range (%08llx, %zx)", name, (uint64_t) range.start, range.size);
     } else {
         return 0;
     }
@@ -153,7 +153,8 @@ addr_t find_string(range_t range, const char *string, int align, int options) {
         buf[i+1] = (uint8_t) string[i];
     }
     bool pz = options & PRECEDING_ZERO;
-    addr_t result = find_data_raw(range, pz ? buf : buf + 1, pz ? len + 2 : len + 1, pz ? 1 : 0, align, options, string);
+    bool tz = options & TRAILING_ZERO;
+    addr_t result = find_data_raw(range, pz ? buf : buf + 1, len + tz + pz, pz ? 1 : 0, align, options, string);
     return result;
 }
 
@@ -186,7 +187,7 @@ addr_t find_int32(range_t range, uint32_t number, int options) {
 addr_t find_bof(range_t range, addr_t eof, int is_thumb) {
     addr_t start = eof & ~1;
     if(start - range.start >= range.size) {
-        die("out of range: %x", eof);
+        die("out of range: %llx", (uint64_t) eof);
     }
 
     uint8_t *p = rangeconv(range, MUST_FIND).start + (start - range.start);
@@ -202,7 +203,7 @@ addr_t find_bof(range_t range, addr_t eof, int is_thumb) {
         }
 
     }
-    die("couldn't find the beginning of %08x", eof);
+    die("couldn't find the beginning of %08llx", (uint64_t) eof);
 }
 
 uint32_t resolve_ldr(const struct binary *binary, addr_t addr) {
@@ -215,14 +216,14 @@ uint32_t resolve_ldr(const struct binary *binary, addr_t addr) {
         } else if((val & 0xffff) == 0xf8df) { // thumb-2
             target = base + ((val & 0x0fff0000) >> 16);
         } else {
-            die("weird thumb instruction %08x at %08x", val, addr);
+            die("weird thumb instruction %08x at %08llx", val, (uint64_t) addr);
         }
     } else {
         addr_t base = addr + 8;
         if((val & 0x0fff0000) == 0x59f0000) { // arm
             target = base + (val & 0xfff);
         } else {
-            die("weird ARM instruction %08x at %08x", val, addr);
+            die("weird ARM instruction %08x at %08llx", val, (uint64_t) addr);
         }
     }
     return b_read32(binary, target);
@@ -454,7 +455,7 @@ void findmany_go(struct findmany *fm) {
                     struct pattern *pat = &fm->patterns[p];
                     addr_t result = ptr - pat->pattern_size - start + fm->range.start + 1;
                     if(*pat->result) {
-                        die("found [%s] multiple times in range: first at %08x then at %08x", pat->name, *pat->result, result);
+                        die("found [%s] multiple times in range: first at %08llx then at %08llx", pat->name, (uint64_t) *pat->result, (uint64_t) result);
                     }
                     *pat->result = result + pat->offset;
                 }
@@ -470,7 +471,7 @@ void findmany_go(struct findmany *fm) {
     for(int p = 0; p < fm->num_patterns; p++) {
         struct pattern *pat = &fm->patterns[p];
         if(!*pat->result) {
-            die("didn't find [%s] in range(%x, %zx)", pat->name, fm->range.start, fm->range.size);
+            die("didn't find [%s] in range(%llx, %zx)", pat->name, (uint64_t) fm->range.start, fm->range.size);
         }
     }
 

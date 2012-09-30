@@ -440,7 +440,7 @@ void b_relocate(struct binary *load, const struct binary *target, enum reloc_mod
                 struct data_segment *b = &target->segments[j];
                 addr_t diff = b->vm_range.start - (a->vm_range.start + slide);
                 if(diff < a->vm_range.size || -diff < b->vm_range.size) {
-                    die("segments of load and target overlap; load:%x+%zu target:%x+%zu", a->vm_range.start, a->vm_range.size, b->vm_range.start, b->vm_range.size);
+                    die("segments of load and target overlap; load:%llx+%zu target:%llx+%zu", (uint64_t) a->vm_range.start, a->vm_range.size, (uint64_t) b->vm_range.start, b->vm_range.size);
                 }
             }
         }

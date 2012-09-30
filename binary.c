@@ -37,7 +37,7 @@ inline prange_t rangeconv(range_t range, int flags) {
         }
         return rangeconv_off((range_t) {range.binary, offset, range.size}, flags);
     } else if(flags & MUST_FIND) {
-        die("range (%08x, %zx) not valid", range.start, range.size);
+        die("range (%08llx, %zx) not valid", (uint64_t) range.start, range.size);
     } else {
         return (prange_t) {NULL, 0};
     }
@@ -53,7 +53,7 @@ inline prange_t rangeconv_off(range_t range, int flags) {
     pr.size = range.size;
     if(!prange_check(range.binary, pr)) {
         if(flags & MUST_FIND) {
-            die("offset range (%08x, %zx) not valid", range.start, range.size);
+            die("offset range (%08llx, %zx) not valid", (uint64_t) range.start, range.size);
         } else {
             return (prange_t) {NULL, 0};
         }
@@ -70,7 +70,7 @@ range_t range_to_off_range(range_t range, int flags) {
         return (range_t) {range.binary, offset, range.size};
     }
     if(flags & MUST_FIND) {
-        die("range (%08x, %zx) not valid", range.start, range.size);
+        die("range (%08llx, %zx) not valid", (uint64_t) range.start, range.size);
     } else {
         return (range_t) {NULL, 0, 0};
     }
@@ -82,7 +82,7 @@ range_t off_range_to_range(range_t range, int flags) {
         return (range_t) {range.binary, address, range.size};
     }
     if(flags & MUST_FIND) {
-        die("offset range (%08x, %zx) not valid", range.start, range.size);
+        die("offset range (%08llx, %zx) not valid", (uint64_t) range.start, range.size);
     } else {
         return (range_t) {NULL, 0, 0};
     }

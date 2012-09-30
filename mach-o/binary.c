@@ -229,7 +229,7 @@ void *b_macho_nth_symbol(const struct binary *binary, uint32_t n) {
         die("no symbol table");
     }
     if(n >= binary->mach->nsyms) {
-        die("sym too high: %u", sym);
+        die("sym too high: %u", n);
     }
     MACHO_SPECIALIZE_POINTER_SIZE(binary,
         nlist_x *nl = binary->mach->symtab + n * sizeof(*nl);

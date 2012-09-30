@@ -67,7 +67,8 @@ void store_file(prange_t range, const char *filename, mode_t mode);
 
 addr_t parse_hex_addr(const char *string);
 
-__attribute__((noreturn)) void _die(const char *fmt, ...);
+__attribute__((noreturn, format(printf, 1, 2)))
+void _die(const char *fmt, ...);
 
 #if defined(__APPLE__) && __DARWIN_C_LEVEL < 200809L
 static inline size_t strnlen(const char *s, size_t n) {

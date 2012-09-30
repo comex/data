@@ -70,7 +70,7 @@ addr_t parse_hex_addr(const char *string) {
     char *end;
     addr_t result = (addr_t) strtoll(string, &end, 16);
     if(!*string || *end) {
-        die("invalid hex value %x", string);
+        die("invalid hex value %s", string);
     }
     return result;
 }
