@@ -7,7 +7,8 @@ DYLIB = so
 else
 DYNAMICLIB  = -dynamiclib -ldylib1.o
 DYLIB = dylib
-override CFLAGS += -DIMG3_SUPPORT -dead_strip
+override CFLAGS += -DIMG3_SUPPORT
+override LDFLAGS += -dead_strip
 endif
 override CFLAGS := -Os -Wall -Wextra -Wno-parentheses -Wreturn-type $(CFLAGS)
 ifneq "$(NDEBUG)" "1"
@@ -32,7 +33,8 @@ GXX ?= $(GXX_$(BUILD))
 
 override CXXFLAGS += $(CFLAGS) -std=gnu++0x -Werror -Wno-pointer-arith
 ifneq "$(GXX)" ""
-override GXX := $(GXX) $(CXXFLAGS)
+override GXXO := $(GXX) $(CXXFLAGS)
+override GXX := $(GXXO) $(LDFLAGS)
 endif
 
 # C
@@ -45,7 +47,8 @@ else
 override CFLAGS += -std=gnu99 -Werror -Wimplicit -Wno-multichar
 endif
 
-override GCC := $(GCC) $(CFLAGS)
+override GCCO := $(GCC) $(CFLAGS)
+override GCC := $(GCCO) $(LDFLAGS)
 
 AR ?= ar
 ifneq "$(filter $(BUILD),armv6 armv7 arm_universal)" ""
@@ -56,10 +59,10 @@ LDID =
 endif
 
 $(OUTDIR)/%.o: %.c *.h $(dir %)/*.h $(EXTRA_DEPS)
-	$(GCC) -c -o $@ $<
+	$(GCCO) -c -o $@ $<
 
 $(OUTDIR)/%.o: %.cpp *.h $(dir %)/*.h $(EXTRA_DEPS)
-	$(GXX) -c -o $@ $<
+	$(GXXO) -c -o $@ $<
 
 .clean:
 	rm -rf native universal armv6 armv7 arm_universal mp
